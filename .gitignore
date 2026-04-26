@@ -1,0 +1,8 @@
+
+data/*.db
+data/*.json
+data/*.csv
+
+data/LASTFM_API_KEY.md
+
+.claude/*
