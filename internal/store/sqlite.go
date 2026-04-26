@@ -80,11 +80,101 @@ func (s *DB) Insert(scrobbles []models.Scrobble) (int, error) {
 	return inserted, tx.Commit()
 }
 
+// ArtistCount is a query result pairing an artist with their play count.
+type ArtistCount struct {
+	Artist string
+	Plays  int
+}
+
+// PlayCount is a generic name/play-count pair used for tracks and albums.
+type PlayCount struct {
+	Name  string
+	Plays int
+}
+
 // Count returns the total number of scrobbles in the database.
 func (s *DB) Count() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM scrobbles`).Scan(&n)
 	return n, err
+}
+
+// TopArtists returns artists ranked by play count within the given window.
+// A zero since means all time.
+func (s *DB) TopArtists(since time.Time, limit int) ([]ArtistCount, error) {
+	var rows *sql.Rows
+	var err error
+	if since.IsZero() {
+		rows, err = s.db.Query(`
+			SELECT artist, COUNT(*) AS plays
+			FROM scrobbles
+			GROUP BY artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT artist, COUNT(*) AS plays
+			FROM scrobbles
+			WHERE played_at >= ?
+			GROUP BY artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, since.Unix(), limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ArtistCount
+	for rows.Next() {
+		var ac ArtistCount
+		if err := rows.Scan(&ac.Artist, &ac.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, ac)
+	}
+	return out, rows.Err()
+}
+
+// topByField queries play counts grouped by a column (track or album) for one artist.
+// field must be a trusted internal constant, never user input.
+func (s *DB) topByField(field, artist string, since time.Time, limit int) ([]PlayCount, error) {
+	q := fmt.Sprintf(`SELECT %s, COUNT(*) AS plays FROM scrobbles WHERE artist = ?`, field)
+	args := []any{artist}
+	if !since.IsZero() {
+		q += ` AND played_at >= ?`
+		args = append(args, since.Unix())
+	}
+	q += fmt.Sprintf(` GROUP BY %s ORDER BY plays DESC LIMIT ?`, field)
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PlayCount
+	for rows.Next() {
+		var pc PlayCount
+		if err := rows.Scan(&pc.Name, &pc.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, pc)
+	}
+	return out, rows.Err()
+}
+
+// TopTracksByArtist returns the most-played tracks for an artist within the given window.
+func (s *DB) TopTracksByArtist(artist string, since time.Time, limit int) ([]PlayCount, error) {
+	return s.topByField("track", artist, since, limit)
+}
+
+// TopAlbumsByArtist returns the most-played albums for an artist within the given window.
+func (s *DB) TopAlbumsByArtist(artist string, since time.Time, limit int) ([]PlayCount, error) {
+	return s.topByField("album", artist, since, limit)
 }
 
 // RecentScrobbles returns the most recently played scrobbles, newest first.
