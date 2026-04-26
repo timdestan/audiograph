@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/timdestan/audiograph/internal/lastfm"
 	"github.com/timdestan/audiograph/internal/models"
@@ -20,7 +21,7 @@ func main() {
 		format   = flag.String("format", "json", "output format: json or csv")
 		out      = flag.String("out", "", "output file path (default: stdout)")
 		limit    = flag.Int("limit", 0, "max scrobbles to fetch (0 = all)")
-		dbPath   = flag.String("db", "", "write scrobbles to a SQLite database at this path")
+		dbPath   = flag.String("db", "data/audiograph.db", "write scrobbles to a SQLite database at this path")
 	)
 	flag.Parse()
 
@@ -41,8 +42,40 @@ func main() {
 
 	client := lastfm.New(key)
 
-	fmt.Fprintf(os.Stderr, "Fetching scrobbles for %q...\n", *username)
-	scrobbles, err := client.GetAllScrobbles(*username, *limit, func(fetched, total int) {
+	var from time.Time
+	var db *store.DB
+	if *dbPath != "" {
+		var err error
+		db, err = store.Open(*dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		from, err = db.LatestScrobbleTime()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading latest scrobble time: %v\n", err)
+			os.Exit(1)
+		}
+		if !from.IsZero() {
+			// last.fm's `from` parameter is inclusive, so without this we'd
+			// always re-fetch the most recent scrobble we already have.
+			// Advancing by one second is safe because last.fm timestamps have
+			// one-second granularity and a track takes longer than a second to
+			// play, making same-second collisions between distinct scrobbles
+			// impossible in practice. INSERT OR IGNORE is a safety net regardless.
+			from = from.Add(time.Second)
+		}
+		if from.IsZero() {
+			fmt.Fprintf(os.Stderr, "Fetching all scrobbles for %q...\n", *username)
+		} else {
+			fmt.Fprintf(os.Stderr, "Fetching scrobbles for %q since %s...\n", *username, from.Local().Format("2006-01-02 15:04"))
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Fetching scrobbles for %q...\n", *username)
+	}
+
+	scrobbles, err := client.GetAllScrobbles(*username, from, *limit, func(fetched, total int) {
 		fmt.Fprintf(os.Stderr, "\r  %d / %d", fetched, total)
 	})
 	if err != nil {
@@ -51,13 +84,7 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "\nDone. %d scrobbles fetched.\n", len(scrobbles))
 
-	if *dbPath != "" {
-		db, err := store.Open(*dbPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
-			os.Exit(1)
-		}
-		defer db.Close()
+	if db != nil {
 		inserted, err := db.Insert(scrobbles)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error writing to database: %v\n", err)

@@ -61,14 +61,15 @@ type recentTracksResponse struct {
 }
 
 // GetAllScrobbles fetches listening history for a user.
+// from restricts results to scrobbles after that time; zero means all time.
 // limit caps the number of scrobbles returned; 0 means no limit.
 // progress is called after each page with (fetched, total).
-func (c *Client) GetAllScrobbles(username string, limit int, progress func(fetched, total int)) ([]models.Scrobble, error) {
+func (c *Client) GetAllScrobbles(username string, from time.Time, limit int, progress func(fetched, total int)) ([]models.Scrobble, error) {
 	var all []models.Scrobble
 	page := 1
 
 	for {
-		resp, err := c.fetchPage(username, page)
+		resp, err := c.fetchPage(username, from, page)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}
@@ -115,7 +116,7 @@ func (c *Client) GetAllScrobbles(username string, limit int, progress func(fetch
 	return all, nil
 }
 
-func (c *Client) fetchPage(username string, page int) (*recentTracksResponse, error) {
+func (c *Client) fetchPage(username string, from time.Time, page int) (*recentTracksResponse, error) {
 	params := url.Values{
 		"method":  {"user.getRecentTracks"},
 		"user":    {username},
@@ -123,6 +124,9 @@ func (c *Client) fetchPage(username string, page int) (*recentTracksResponse, er
 		"format":  {"json"},
 		"limit":   {strconv.Itoa(pageSize)},
 		"page":    {strconv.Itoa(page)},
+	}
+	if !from.IsZero() {
+		params.Set("from", strconv.FormatInt(from.Unix(), 10))
 	}
 
 	req, err := http.NewRequest(http.MethodGet, apiBase+"?"+params.Encode(), nil)

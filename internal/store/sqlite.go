@@ -92,6 +92,17 @@ type PlayCount struct {
 	Plays int
 }
 
+// LatestScrobbleTime returns the played_at of the most recent scrobble,
+// or a zero time if the database is empty.
+func (s *DB) LatestScrobbleTime() (time.Time, error) {
+	var uts sql.NullInt64
+	err := s.db.QueryRow(`SELECT MAX(played_at) FROM scrobbles`).Scan(&uts)
+	if err != nil || !uts.Valid {
+		return time.Time{}, err
+	}
+	return time.Unix(uts.Int64, 0).UTC(), nil
+}
+
 // Count returns the total number of scrobbles in the database.
 func (s *DB) Count() (int, error) {
 	var n int
