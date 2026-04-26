@@ -110,6 +110,45 @@ func (s *DB) Count() (int, error) {
 	return n, err
 }
 
+// TimeCount pairs a time-bucket label with a scrobble count.
+type TimeCount struct {
+	Label string
+	Count int
+}
+
+// ScrobbleCountsByTime returns scrobble counts for an artist grouped by the
+// given strftime format string (e.g. "%Y", "%Y-%m", "%Y-%m-%d").
+// A zero since means all time.
+func (s *DB) ScrobbleCountsByTime(artist string, since time.Time, bucketFmt string) ([]TimeCount, error) {
+	// strftime(?) is the first positional argument, followed by WHERE filters.
+	args := []any{bucketFmt, artist}
+	where := "WHERE artist = ?"
+	if !since.IsZero() {
+		where += " AND played_at >= ?"
+		args = append(args, since.Unix())
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT strftime(?, datetime(played_at, 'unixepoch')), COUNT(*)
+		FROM scrobbles %s
+		GROUP BY 1 ORDER BY 1
+	`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TimeCount
+	for rows.Next() {
+		var tc TimeCount
+		if err := rows.Scan(&tc.Label, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
+
 // TopArtists returns artists ranked by play count within the given window.
 // A zero since means all time.
 func (s *DB) TopArtists(since time.Time, limit int) ([]ArtistCount, error) {

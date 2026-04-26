@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -32,6 +33,7 @@ const baseStyle = `
   .periods a { margin-right: 0.75rem; color: #555; text-decoration: none; }
   .periods a:hover, .periods a.active { color: #000; text-decoration: underline; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+  .chart-wrap { position: relative; height: 180px; margin-bottom: 1.5rem; }
 </style>`
 
 const recentHTML = `<!DOCTYPE html>
@@ -49,7 +51,7 @@ const recentHTML = `<!DOCTYPE html>
   {{range .}}
   <tr>
     <td class="time">{{formatTime .PlayedAt}}</td>
-    <td>{{.Artist}}</td>
+    <td><a href="/artist?name={{urlquery .Artist}}">{{.Artist}}</a></td>
     <td>{{.Track}}</td>
     <td>{{.Album}}</td>
   </tr>
@@ -103,6 +105,34 @@ const artistDetailHTML = `<!DOCTYPE html>
   <a href="/artist?name={{urlquery .Artist}}&period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
   <a href="/artist?name={{urlquery .Artist}}&period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
 </div>
+{{if .ChartLabels}}
+<div class="chart-wrap">
+  <canvas id="scrobble-chart"></canvas>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+new Chart(document.getElementById('scrobble-chart'), {
+  type: 'bar',
+  data: {
+    labels: {{.ChartLabels}},
+    datasets: [{ data: {{.ChartData}}, backgroundColor: '#4a90d9', borderRadius: 2, barPercentage: 0.5, categoryPercentage: 0.8 }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false } },
+      y: {
+        beginAtZero: true,
+        title: { display: true, text: 'plays' },
+        ticks: { precision: 0 }
+      }
+    }
+  }
+});
+</script>
+{{end}}
 <div class="two-col">
   <div>
     <table>
@@ -161,10 +191,36 @@ type artistsData struct {
 }
 
 type artistDetailData struct {
-	Artist string
-	Period string
-	Tracks []store.PlayCount
-	Albums []store.PlayCount
+	Artist      string
+	Period      string
+	Tracks      []store.PlayCount
+	Albums      []store.PlayCount
+	ChartLabels template.JS
+	ChartData   template.JS
+}
+
+// periodBucketFmt returns the strftime format appropriate for the given period.
+func periodBucketFmt(period string) string {
+	switch period {
+	case "1y":
+		return "%Y-%m"
+	case "7d", "30d":
+		return "%Y-%m-%d"
+	default:
+		return "%Y"
+	}
+}
+
+func marshalChartData(counts []store.TimeCount) (labels, data template.JS) {
+	ls := make([]string, len(counts))
+	ds := make([]int, len(counts))
+	for i, c := range counts {
+		ls[i] = c.Label
+		ds[i] = c.Count
+	}
+	lsJSON, _ := json.Marshal(ls)
+	dsJSON, _ := json.Marshal(ds)
+	return template.JS(lsJSON), template.JS(dsJSON)
 }
 
 // statusRecorder captures the HTTP status code written by a handler.
@@ -288,12 +344,21 @@ func main() {
 			log.Printf("query error: %v", err)
 			return
 		}
+		counts, err := db.ScrobbleCountsByTime(artist, since, periodBucketFmt(period))
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		chartLabels, chartData := marshalChartData(counts)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.artistDetail.Execute(w, artistDetailData{
-			Artist: artist,
-			Period: period,
-			Tracks: tracks,
-			Albums: albums,
+			Artist:      artist,
+			Period:      period,
+			Tracks:      tracks,
+			Albums:      albums,
+			ChartLabels: chartLabels,
+			ChartData:   chartData,
 		}); err != nil {
 			log.Printf("template error: %v", err)
 		}
