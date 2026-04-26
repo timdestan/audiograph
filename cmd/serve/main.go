@@ -15,35 +15,84 @@ import (
 
 const pageLimit = 100
 
+// baseHeadScripts runs before <body> to apply the saved theme before first paint.
+const baseHeadScripts = `<script>
+(function(){
+  var s = localStorage.getItem('theme');
+  var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (s === 'dark' || (!s && d)) document.documentElement.classList.add('dark');
+})();
+</script>`
+
 const baseStyle = `
 <style>
-  body { font-family: sans-serif; max-width: 860px; margin: 40px auto; padding: 0 16px; color: #222; }
+  :root {
+    --bg:           #fff;
+    --fg:           #222;
+    --muted:        #888;
+    --link:         #555;
+    --active-fg:    #000;
+    --border:       #ddd;
+    --border-light: #eee;
+    --hover-bg:     #f9f9f9;
+  }
+  :root.dark {
+    --bg:           #1a1a1a;
+    --fg:           #e0e0e0;
+    --muted:        #999;
+    --link:         #aaa;
+    --active-fg:    #fff;
+    --border:       #444;
+    --border-light: #2e2e2e;
+    --hover-bg:     #242424;
+  }
+  body { font-family: sans-serif; max-width: 860px; margin: 40px auto; padding: 0 16px;
+         color: var(--fg); background: var(--bg); }
   h1   { font-size: 1.4rem; margin-bottom: 0.5rem; }
   h2   { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
-  nav  { margin-bottom: 1.5rem; font-size: 0.9rem; }
-  nav a { margin-right: 1rem; color: #555; text-decoration: none; }
-  nav a:hover, nav a.active { color: #000; text-decoration: underline; }
+  nav  { margin-bottom: 1.5rem; font-size: 0.9rem; display: flex; align-items: baseline; gap: 1rem; }
+  nav a { color: var(--link); text-decoration: none; }
+  nav a:hover, nav a.active { color: var(--active-fg); text-decoration: underline; }
+  nav .spacer { flex: 1; }
+  .theme-btn { background: none; border: none; cursor: pointer; font: inherit;
+               font-size: 0.9rem; color: var(--link); padding: 0; }
+  .theme-btn:hover { color: var(--active-fg); text-decoration: underline; }
+  .theme-btn::after { content: 'light'; }
+  :root.dark .theme-btn::after { content: 'dark'; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  th   { text-align: left; border-bottom: 2px solid #ddd; padding: 6px 8px; }
-  td   { padding: 6px 8px; border-bottom: 1px solid #eee; }
-  tr:hover td { background: #f9f9f9; }
-  .time  { color: #888; white-space: nowrap; }
-  .num   { text-align: right; color: #555; }
+  th   { text-align: left; border-bottom: 2px solid var(--border); padding: 6px 8px; }
+  td   { padding: 6px 8px; border-bottom: 1px solid var(--border-light); }
+  tr:hover td { background: var(--hover-bg); }
+  a    { color: var(--link); }
+  a:hover { color: var(--active-fg); }
+  .time  { color: var(--muted); white-space: nowrap; }
+  .num   { text-align: right; color: var(--muted); }
   .periods { margin-bottom: 1rem; font-size: 0.85rem; }
-  .periods a { margin-right: 0.75rem; color: #555; text-decoration: none; }
-  .periods a:hover, .periods a.active { color: #000; text-decoration: underline; }
+  .periods a { margin-right: 0.75rem; color: var(--link); text-decoration: none; }
+  .periods a:hover, .periods a.active { color: var(--active-fg); text-decoration: underline; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
   .chart-wrap { position: relative; height: 180px; margin-bottom: 1.5rem; }
 </style>`
 
+// baseBodyScripts is included once at the end of each page's <body>.
+const baseBodyScripts = `<script>
+function toggleTheme() {
+  var isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  location.reload();
+}
+</script>`
+
 const recentHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph</title>` + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph</title>` + baseHeadScripts + baseStyle + `</head>
 <body>
 <h1>audiograph</h1>
 <nav>
   <a href="/" class="active">Recent</a>
   <a href="/artists">Top artists</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
 <table>
   <thead><tr><th>Time</th><th>Artist</th><th>Track</th><th>Album</th></tr></thead>
@@ -58,16 +107,18 @@ const recentHTML = `<!DOCTYPE html>
   {{end}}
   </tbody>
 </table>
-</body></html>`
+` + baseBodyScripts + `</body></html>`
 
 const artistsHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph – top artists</title>` + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph – top artists</title>` + baseHeadScripts + baseStyle + `</head>
 <body>
 <h1>audiograph</h1>
 <nav>
   <a href="/">Recent</a>
   <a href="/artists" class="active">Top artists</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
 <div class="periods">
   <a href="/artists?period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
@@ -87,16 +138,18 @@ const artistsHTML = `<!DOCTYPE html>
   {{end}}
   </tbody>
 </table>
-</body></html>`
+` + baseBodyScripts + `</body></html>`
 
 const artistDetailHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph – {{.Artist}}</title>` + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph – {{.Artist}}</title>` + baseHeadScripts + baseStyle + `</head>
 <body>
 <h1>audiograph</h1>
 <nav>
   <a href="/">Recent</a>
   <a href="/artists?period={{.Period}}">Top artists</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
 <h2>{{.Artist}}</h2>
 <div class="periods">
@@ -111,26 +164,30 @@ const artistDetailHTML = `<!DOCTYPE html>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
-new Chart(document.getElementById('scrobble-chart'), {
-  type: 'bar',
-  data: {
-    labels: {{.ChartLabels}},
-    datasets: [{ data: {{.ChartData}}, backgroundColor: '#4a90d9', borderRadius: 2, barPercentage: 0.5, categoryPercentage: 0.8 }]
-  },
-  options: {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { grid: { display: false } },
-      y: {
-        beginAtZero: true,
-        title: { display: true, text: 'plays' },
-        ticks: { precision: 0 }
+(function(){
+  var dark = document.documentElement.classList.contains('dark');
+  var textColor = dark ? '#999' : '#666';
+  var gridColor = dark ? '#333' : '#e5e5e5';
+  new Chart(document.getElementById('scrobble-chart'), {
+    type: 'bar',
+    data: {
+      labels: {{.ChartLabels}},
+      datasets: [{ data: {{.ChartData}}, backgroundColor: '#4a90d9', borderRadius: 2,
+                   barPercentage: 0.5, categoryPercentage: 0.8 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: textColor } },
+        y: { beginAtZero: true, grid: { color: gridColor },
+             ticks: { color: textColor, precision: 0 },
+             title: { display: true, text: 'plays', color: textColor } }
       }
     }
-  }
-});
+  });
+})();
 </script>
 {{end}}
 <div class="two-col">
@@ -163,7 +220,7 @@ new Chart(document.getElementById('scrobble-chart'), {
     </table>
   </div>
 </div>
-</body></html>`
+` + baseBodyScripts + `</body></html>`
 
 type templates struct {
 	recent       *template.Template
