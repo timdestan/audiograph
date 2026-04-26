@@ -92,6 +92,20 @@ type PlayCount struct {
 	Plays int
 }
 
+// AlbumCount pairs an album+artist with a play count.
+type AlbumCount struct {
+	Album  string
+	Artist string
+	Plays  int
+}
+
+// TrackCount pairs a track+artist with a play count.
+type TrackCount struct {
+	Track  string
+	Artist string
+	Plays  int
+}
+
 // LatestScrobbleTime returns the played_at of the most recent scrobble,
 // or a zero time if the database is empty.
 func (s *DB) LatestScrobbleTime() (time.Time, error) {
@@ -184,6 +198,90 @@ func (s *DB) TopArtists(since time.Time, limit int) ([]ArtistCount, error) {
 			return nil, err
 		}
 		out = append(out, ac)
+	}
+	return out, rows.Err()
+}
+
+// TopAlbums returns albums ranked by play count within the given window.
+// Albums are keyed by (album, artist) to avoid collisions across artists.
+// A zero since means all time.
+func (s *DB) TopAlbums(since time.Time, limit int) ([]AlbumCount, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if since.IsZero() {
+		rows, err = s.db.Query(`
+			SELECT album, artist, COUNT(*) AS plays
+			FROM scrobbles
+			GROUP BY album, artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT album, artist, COUNT(*) AS plays
+			FROM scrobbles
+			WHERE played_at >= ?
+			GROUP BY album, artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, since.Unix(), limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AlbumCount
+	for rows.Next() {
+		var ac AlbumCount
+		if err := rows.Scan(&ac.Album, &ac.Artist, &ac.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, ac)
+	}
+	return out, rows.Err()
+}
+
+// TopTracks returns tracks ranked by play count within the given window.
+// Tracks are keyed by (track, artist) to avoid collisions across artists.
+// A zero since means all time.
+func (s *DB) TopTracks(since time.Time, limit int) ([]TrackCount, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if since.IsZero() {
+		rows, err = s.db.Query(`
+			SELECT track, artist, COUNT(*) AS plays
+			FROM scrobbles
+			GROUP BY track, artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, limit)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT track, artist, COUNT(*) AS plays
+			FROM scrobbles
+			WHERE played_at >= ?
+			GROUP BY track, artist
+			ORDER BY plays DESC
+			LIMIT ?
+		`, since.Unix(), limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TrackCount
+	for rows.Next() {
+		var tc TrackCount
+		if err := rows.Scan(&tc.Track, &tc.Artist, &tc.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
 	}
 	return out, rows.Err()
 }

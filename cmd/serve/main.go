@@ -91,6 +91,8 @@ const recentHTML = `<!DOCTYPE html>
 <nav>
   <a href="/" class="active">Recent</a>
   <a href="/artists">Top artists</a>
+  <a href="/albums">Top albums</a>
+  <a href="/tracks">Top tracks</a>
   <span class="spacer"></span>
   <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
@@ -117,6 +119,8 @@ const artistsHTML = `<!DOCTYPE html>
 <nav>
   <a href="/">Recent</a>
   <a href="/artists" class="active">Top artists</a>
+  <a href="/albums">Top albums</a>
+  <a href="/tracks">Top tracks</a>
   <span class="spacer"></span>
   <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
@@ -140,6 +144,74 @@ const artistsHTML = `<!DOCTYPE html>
 </table>
 ` + baseBodyScripts + `</body></html>`
 
+const tracksHTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>audiograph – top tracks</title>` + baseHeadScripts + baseStyle + `</head>
+<body>
+<h1>audiograph</h1>
+<nav>
+  <a href="/">Recent</a>
+  <a href="/artists">Top artists</a>
+  <a href="/albums">Top albums</a>
+  <a href="/tracks" class="active">Top tracks</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
+</nav>
+<div class="periods">
+  <a href="/tracks?period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
+  <a href="/tracks?period=30d" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
+  <a href="/tracks?period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
+  <a href="/tracks?period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
+</div>
+<table>
+  <thead><tr><th>#</th><th>Track</th><th>Artist</th><th class="num">Plays</th></tr></thead>
+  <tbody>
+  {{range $i, $t := .Tracks}}
+  <tr>
+    <td class="num">{{inc $i}}</td>
+    <td>{{$t.Track}}</td>
+    <td><a href="/artist?name={{urlquery $t.Artist}}&period={{$.Period}}">{{$t.Artist}}</a></td>
+    <td class="num">{{$t.Plays}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+` + baseBodyScripts + `</body></html>`
+
+const albumsHTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>audiograph – top albums</title>` + baseHeadScripts + baseStyle + `</head>
+<body>
+<h1>audiograph</h1>
+<nav>
+  <a href="/">Recent</a>
+  <a href="/artists">Top artists</a>
+  <a href="/albums" class="active">Top albums</a>
+  <a href="/tracks">Top tracks</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
+</nav>
+<div class="periods">
+  <a href="/albums?period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
+  <a href="/albums?period=30d" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
+  <a href="/albums?period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
+  <a href="/albums?period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
+</div>
+<table>
+  <thead><tr><th>#</th><th>Album</th><th>Artist</th><th class="num">Plays</th></tr></thead>
+  <tbody>
+  {{range $i, $a := .Albums}}
+  <tr>
+    <td class="num">{{inc $i}}</td>
+    <td>{{$a.Album}}</td>
+    <td><a href="/artist?name={{urlquery $a.Artist}}&period={{$.Period}}">{{$a.Artist}}</a></td>
+    <td class="num">{{$a.Plays}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+` + baseBodyScripts + `</body></html>`
+
 const artistDetailHTML = `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>audiograph – {{.Artist}}</title>` + baseHeadScripts + baseStyle + `</head>
@@ -148,6 +220,8 @@ const artistDetailHTML = `<!DOCTYPE html>
 <nav>
   <a href="/">Recent</a>
   <a href="/artists?period={{.Period}}">Top artists</a>
+  <a href="/albums?period={{.Period}}">Top albums</a>
+  <a href="/tracks?period={{.Period}}">Top tracks</a>
   <span class="spacer"></span>
   <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
@@ -225,6 +299,8 @@ const artistDetailHTML = `<!DOCTYPE html>
 type templates struct {
 	recent       *template.Template
 	artists      *template.Template
+	albums       *template.Template
+	tracks       *template.Template
 	artistDetail *template.Template
 }
 
@@ -238,13 +314,25 @@ func buildTemplates() templates {
 	}
 	recent := template.Must(template.New("recent").Funcs(funcs).Parse(recentHTML))
 	artists := template.Must(template.New("artists").Funcs(funcs).Parse(artistsHTML))
+	albums := template.Must(template.New("albums").Funcs(funcs).Parse(albumsHTML))
+	tracks := template.Must(template.New("tracks").Funcs(funcs).Parse(tracksHTML))
 	artistDetail := template.Must(template.New("artistDetail").Funcs(funcs).Parse(artistDetailHTML))
-	return templates{recent: recent, artists: artists, artistDetail: artistDetail}
+	return templates{recent: recent, artists: artists, albums: albums, tracks: tracks, artistDetail: artistDetail}
 }
 
 type artistsData struct {
 	Period  string
 	Artists []store.ArtistCount
+}
+
+type albumsData struct {
+	Period string
+	Albums []store.AlbumCount
+}
+
+type tracksData struct {
+	Period string
+	Tracks []store.TrackCount
 }
 
 type artistDetailData struct {
@@ -378,6 +466,34 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.artists.Execute(w, artistsData{Period: period, Artists: artists}); err != nil {
+			log.Printf("template error: %v", err)
+		}
+	})
+
+	http.HandleFunc("/albums", func(w http.ResponseWriter, r *http.Request) {
+		since, period := parsePeriod(r.URL.Query().Get("period"))
+		albums, err := db.TopAlbums(since, pageLimit)
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.albums.Execute(w, albumsData{Period: period, Albums: albums}); err != nil {
+			log.Printf("template error: %v", err)
+		}
+	})
+
+	http.HandleFunc("/tracks", func(w http.ResponseWriter, r *http.Request) {
+		since, period := parsePeriod(r.URL.Query().Get("period"))
+		tracks, err := db.TopTracks(since, pageLimit)
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.tracks.Execute(w, tracksData{Period: period, Tracks: tracks}); err != nil {
 			log.Printf("template error: %v", err)
 		}
 	})
