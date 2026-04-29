@@ -383,6 +383,68 @@ func (s *DB) DeleteRange(from, to time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// AlbumRef is a minimal album identity used for art prefetching.
+type AlbumRef struct {
+	Artist string
+	Album  string
+	MBID   string
+}
+
+// AlbumArtEntry is a resolved album_art row with a non-empty URL.
+type AlbumArtEntry struct {
+	Artist string
+	Album  string
+	URL    string
+}
+
+// AlbumArtEntries returns all album_art rows that have a resolved URL.
+// Used by the prefetch worker to download any that aren't yet on disk.
+func (s *DB) AlbumArtEntries() ([]AlbumArtEntry, error) {
+	rows, err := s.db.Query(
+		`SELECT artist, album, url FROM album_art WHERE url != ''`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AlbumArtEntry
+	for rows.Next() {
+		var e AlbumArtEntry
+		if err := rows.Scan(&e.Artist, &e.Album, &e.URL); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// UnresolvedAlbums returns distinct albums from scrobbles that have no
+// entry in album_art yet. Used by the prefetch worker to discover new art.
+func (s *DB) UnresolvedAlbums() ([]AlbumRef, error) {
+	rows, err := s.db.Query(`
+		SELECT s.artist, s.album, MAX(s.mbid_album) AS mbid
+		FROM scrobbles s
+		LEFT JOIN album_art aa ON aa.artist = s.artist AND aa.album = s.album
+		WHERE aa.artist IS NULL
+		GROUP BY s.artist, s.album
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AlbumRef
+	for rows.Next() {
+		var a AlbumRef
+		if err := rows.Scan(&a.Artist, &a.Album, &a.MBID); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // RecentScrobbles returns scrobbles ordered newest-first with limit/offset for pagination.
 func (s *DB) RecentScrobbles(limit, offset int) ([]models.Scrobble, error) {
 	rows, err := s.db.Query(`

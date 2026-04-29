@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/timdestan/audiograph/internal/artcache"
 	"github.com/timdestan/audiograph/internal/lastfm"
 	"github.com/timdestan/audiograph/internal/models"
 	"github.com/timdestan/audiograph/internal/store"
@@ -465,6 +467,12 @@ func parsePeriod(s string) (time.Time, string) {
 	}
 }
 
+func serveImage(w http.ResponseWriter, data []byte) {
+	w.Header().Set("Content-Type", http.DetectContentType(data))
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
+}
+
 func main() {
 	dbPath  := flag.String("db", "data/audiograph.db", "path to SQLite database")
 	addr    := flag.String("addr", "localhost:8080", "listen address")
@@ -488,6 +496,12 @@ func main() {
 	} else {
 		log.Println("no last.fm API key — set -api-key or LASTFM_API_KEY to enable album art fallback")
 	}
+
+	artCache, err := artcache.New(filepath.Join(os.TempDir(), "audiograph-art"))
+	if err != nil {
+		log.Fatalf("creating art cache: %v", err)
+	}
+	log.Printf("album art cache: %s", artCache.Dir)
 
 	// artHTTPClient does not follow redirects so we can inspect CAA's 307.
 	artHTTPClient := &http.Client{
@@ -514,6 +528,53 @@ func main() {
 		}
 		return ""
 	}
+
+	// Prefetch album art in the background: first download already-resolved
+	// URLs that aren't on disk yet, then resolve and download new albums.
+	go func() {
+		entries, err := db.AlbumArtEntries()
+		if err != nil {
+			log.Printf("prefetch: listing entries: %v", err)
+			return
+		}
+		downloaded := 0
+		for _, e := range entries {
+			if artCache.Has(e.Artist, e.Album) {
+				continue
+			}
+			if _, err := artCache.Fetch(e.URL, e.Artist, e.Album); err != nil {
+				log.Printf("prefetch: %s/%s: %v", e.Artist, e.Album, err)
+			} else {
+				downloaded++
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if downloaded > 0 {
+			log.Printf("prefetch: downloaded %d cached images", downloaded)
+		}
+
+		unresolved, err := db.UnresolvedAlbums()
+		if err != nil {
+			log.Printf("prefetch: listing unresolved: %v", err)
+			return
+		}
+		resolved := 0
+		for _, a := range unresolved {
+			imageURL := resolveArt(a.MBID, a.Artist, a.Album)
+			_ = db.SetAlbumArt(a.Artist, a.Album, imageURL)
+			if imageURL != "" {
+				if _, err := artCache.Fetch(imageURL, a.Artist, a.Album); err != nil {
+					log.Printf("prefetch: %s/%s: %v", a.Artist, a.Album, err)
+				} else {
+					resolved++
+				}
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if len(unresolved) > 0 {
+			log.Printf("prefetch: resolved art for %d/%d new albums", resolved, len(unresolved))
+		}
+	}()
 
 	tmpl := buildTemplates()
 
@@ -557,21 +618,34 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
-		if u, cached, err := db.AlbumArt(artist, album); err == nil && cached {
-			if u == "" {
-				http.NotFound(w, r)
-				return
-			}
-			http.Redirect(w, r, u, http.StatusFound)
+
+		// Serve from disk if already cached.
+		if data, ok := artCache.Get(artist, album); ok {
+			serveImage(w, data)
 			return
 		}
-		imageURL := resolveArt(mbid, artist, album)
-		_ = db.SetAlbumArt(artist, album, imageURL)
+
+		// Get or resolve the remote URL.
+		var imageURL string
+		if u, cached, err := db.AlbumArt(artist, album); err == nil && cached {
+			imageURL = u
+		} else {
+			imageURL = resolveArt(mbid, artist, album)
+			_ = db.SetAlbumArt(artist, album, imageURL)
+		}
 		if imageURL == "" {
 			http.NotFound(w, r)
 			return
 		}
-		http.Redirect(w, r, imageURL, http.StatusFound)
+
+		// Download, cache on disk, and serve.
+		data, err := artCache.Fetch(imageURL, artist, album)
+		if err != nil {
+			log.Printf("art: fetch %q/%q: %v", artist, album, err)
+			http.NotFound(w, r)
+			return
+		}
+		serveImage(w, data)
 	})
 
 	http.HandleFunc("/artists", func(w http.ResponseWriter, r *http.Request) {
