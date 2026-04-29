@@ -325,6 +325,29 @@ func (s *DB) TopAlbumsByArtist(artist string, since time.Time, limit int) ([]Pla
 	return s.topByField("album", artist, since, limit)
 }
 
+// CountInRange returns the number of scrobbles with played_at in [from, to].
+func (s *DB) CountInRange(from, to time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM scrobbles WHERE played_at >= ? AND played_at <= ?`,
+		from.Unix(), to.Unix(),
+	).Scan(&n)
+	return n, err
+}
+
+// DeleteRange removes all scrobbles with played_at in [from, to] and returns
+// the number of rows deleted.
+func (s *DB) DeleteRange(from, to time.Time) (int64, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM scrobbles WHERE played_at >= ? AND played_at <= ?`,
+		from.Unix(), to.Unix(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RecentScrobbles returns the most recently played scrobbles, newest first.
 func (s *DB) RecentScrobbles(limit int) ([]models.Scrobble, error) {
 	rows, err := s.db.Query(`
