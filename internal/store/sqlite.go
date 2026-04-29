@@ -348,14 +348,14 @@ func (s *DB) DeleteRange(from, to time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
-// RecentScrobbles returns the most recently played scrobbles, newest first.
-func (s *DB) RecentScrobbles(limit int) ([]models.Scrobble, error) {
+// RecentScrobbles returns scrobbles ordered newest-first with limit/offset for pagination.
+func (s *DB) RecentScrobbles(limit, offset int) ([]models.Scrobble, error) {
 	rows, err := s.db.Query(`
 		SELECT played_at, artist, album, track, mbid_artist, mbid_album, mbid_track
 		FROM scrobbles
 		ORDER BY played_at DESC
-		LIMIT ?
-	`, limit)
+		LIMIT ? OFFSET ?
+	`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/timdestan/audiograph/internal/models"
 	"github.com/timdestan/audiograph/internal/store"
 )
 
@@ -85,7 +86,14 @@ function toggleTheme() {
 
 const recentHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph</title>` + baseHeadScripts + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph</title>` + baseHeadScripts + baseStyle + `
+<style>
+  .pagination { margin-top: 1rem; font-size: 0.9rem; display: flex; gap: 1rem; }
+  .pagination a { color: var(--link); text-decoration: none; }
+  .pagination a:hover { color: var(--active-fg); text-decoration: underline; }
+  .pagination .gap { flex: 1; }
+</style>
+</head>
 <body>
 <h1>audiograph</h1>
 <nav>
@@ -99,7 +107,7 @@ const recentHTML = `<!DOCTYPE html>
 <table>
   <thead><tr><th>Time</th><th>Artist</th><th>Track</th><th>Album</th></tr></thead>
   <tbody>
-  {{range .}}
+  {{range .Scrobbles}}
   <tr>
     <td class="time">{{formatTime .PlayedAt}}</td>
     <td><a href="/artist?name={{urlquery .Artist}}">{{.Artist}}</a></td>
@@ -109,6 +117,11 @@ const recentHTML = `<!DOCTYPE html>
   {{end}}
   </tbody>
 </table>
+<div class="pagination">
+  {{if .HasNewer}}<a href="/?page={{.PrevPage}}">← Newer</a>{{end}}
+  <span class="gap"></span>
+  {{if .HasOlder}}<a href="/?page={{.NextPage}}">Older →</a>{{end}}
+</div>
 ` + baseBodyScripts + `</body></html>`
 
 const artistsHTML = `<!DOCTYPE html>
@@ -320,6 +333,15 @@ func buildTemplates() templates {
 	return templates{recent: recent, artists: artists, albums: albums, tracks: tracks, artistDetail: artistDetail}
 }
 
+type recentData struct {
+	Scrobbles []models.Scrobble
+	Page      int
+	PrevPage  int
+	NextPage  int
+	HasNewer  bool
+	HasOlder  bool
+}
+
 type artistsData struct {
 	Period  string
 	Artists []store.ArtistCount
@@ -444,14 +466,33 @@ func main() {
 	tmpl := buildTemplates()
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		scrobbles, err := db.RecentScrobbles(pageLimit)
+		page := 1
+		if p := r.URL.Query().Get("page"); p != "" {
+			if n, err := fmt.Sscanf(p, "%d", &page); n != 1 || err != nil || page < 1 {
+				page = 1
+			}
+		}
+		offset := (page - 1) * pageLimit
+		// Fetch one extra to detect whether an older page exists.
+		scrobbles, err := db.RecentScrobbles(pageLimit+1, offset)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
 			log.Printf("query error: %v", err)
 			return
 		}
+		hasOlder := len(scrobbles) > pageLimit
+		if hasOlder {
+			scrobbles = scrobbles[:pageLimit]
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.recent.Execute(w, scrobbles); err != nil {
+		if err := tmpl.recent.Execute(w, recentData{
+			Scrobbles: scrobbles,
+			Page:      page,
+			PrevPage:  page - 1,
+			NextPage:  page + 1,
+			HasNewer:  page > 1,
+			HasOlder:  hasOlder,
+		}); err != nil {
 			log.Printf("template error: %v", err)
 		}
 	})
