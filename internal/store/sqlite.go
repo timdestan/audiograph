@@ -10,6 +10,12 @@ import (
 )
 
 const schema = `
+CREATE TABLE IF NOT EXISTS album_art (
+	artist TEXT NOT NULL,
+	album  TEXT NOT NULL,
+	url    TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (artist, album)
+);
 CREATE TABLE IF NOT EXISTS scrobbles (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	played_at   INTEGER NOT NULL,
@@ -323,6 +329,34 @@ func (s *DB) TopTracksByArtist(artist string, since time.Time, limit int) ([]Pla
 // TopAlbumsByArtist returns the most-played albums for an artist within the given window.
 func (s *DB) TopAlbumsByArtist(artist string, since time.Time, limit int) ([]PlayCount, error) {
 	return s.topByField("album", artist, since, limit)
+}
+
+// AlbumArt returns the cached image URL for an artist+album pair.
+// cached=false means no lookup has been attempted yet.
+// A cached record with an empty url means a lookup was tried but found nothing.
+func (s *DB) AlbumArt(artist, album string) (url string, cached bool, err error) {
+	var u string
+	err = s.db.QueryRow(
+		`SELECT url FROM album_art WHERE artist = ? AND album = ?`,
+		artist, album,
+	).Scan(&u)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return u, true, nil
+}
+
+// SetAlbumArt stores a resolved image URL for an artist+album.
+// Pass an empty url to record that no art was found, preventing future lookups.
+func (s *DB) SetAlbumArt(artist, album, url string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO album_art (artist, album, url) VALUES (?, ?, ?)`,
+		artist, album, url,
+	)
+	return err
 }
 
 // CountInRange returns the number of scrobbles with played_at in [from, to].

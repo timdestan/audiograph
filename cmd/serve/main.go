@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
+	"github.com/timdestan/audiograph/internal/lastfm"
 	"github.com/timdestan/audiograph/internal/models"
 	"github.com/timdestan/audiograph/internal/store"
 )
@@ -67,6 +69,7 @@ const baseStyle = `
   a    { color: var(--link); }
   a:hover { color: var(--active-fg); }
   .time  { color: var(--muted); white-space: nowrap; }
+  .art   { width: 32px; height: 32px; object-fit: cover; vertical-align: middle; border-radius: 3px; margin-right: 6px; }
   .num   { text-align: right; color: var(--muted); }
   .periods { margin-bottom: 1rem; font-size: 0.85rem; }
   .periods a { margin-right: 0.75rem; color: var(--link); text-decoration: none; }
@@ -112,7 +115,7 @@ const recentHTML = `<!DOCTYPE html>
     <td class="time">{{formatTime .PlayedAt}}</td>
     <td><a href="/artist?name={{urlquery .Artist}}">{{.Artist}}</a></td>
     <td>{{.Track}}</td>
-    <td>{{.Album}}</td>
+    <td><img class="art" src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid={{urlquery .MBIDAlbum}}" alt="" loading="lazy" onerror="this.style.display='none'">{{.Album}}</td>
   </tr>
   {{end}}
   </tbody>
@@ -453,8 +456,9 @@ func parsePeriod(s string) (time.Time, string) {
 }
 
 func main() {
-	dbPath := flag.String("db", "data/audiograph.db", "path to SQLite database")
-	addr := flag.String("addr", "localhost:8080", "listen address")
+	dbPath  := flag.String("db", "data/audiograph.db", "path to SQLite database")
+	addr    := flag.String("addr", "localhost:8080", "listen address")
+	apiKey  := flag.String("api-key", "", "last.fm API key for album art fallback (or set LASTFM_API_KEY)")
 	flag.Parse()
 
 	db, err := store.Open(*dbPath)
@@ -462,6 +466,44 @@ func main() {
 		log.Fatalf("opening database: %v", err)
 	}
 	defer db.Close()
+
+	key := *apiKey
+	if key == "" {
+		key = os.Getenv("LASTFM_API_KEY")
+	}
+	var lfm *lastfm.Client
+	if key != "" {
+		lfm = lastfm.New(key)
+		log.Println("last.fm API key provided — album art fallback enabled")
+	} else {
+		log.Println("no last.fm API key — set -api-key or LASTFM_API_KEY to enable album art fallback")
+	}
+
+	// artHTTPClient does not follow redirects so we can inspect CAA's 307.
+	artHTTPClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resolveArt := func(mbid, artist, album string) string {
+		if mbid != "" {
+			resp, err := artHTTPClient.Head("https://coverartarchive.org/release/" + mbid + "/front")
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusFound {
+					return "https://coverartarchive.org/release/" + mbid + "/front-250"
+				}
+			}
+		}
+		if lfm != nil {
+			if u, err := lfm.AlbumImageURL(artist, album); err == nil && u != "" {
+				return u
+			}
+		}
+		return ""
+	}
 
 	tmpl := buildTemplates()
 
@@ -495,6 +537,31 @@ func main() {
 		}); err != nil {
 			log.Printf("template error: %v", err)
 		}
+	})
+
+	http.HandleFunc("/art", func(w http.ResponseWriter, r *http.Request) {
+		artist := r.URL.Query().Get("artist")
+		album := r.URL.Query().Get("album")
+		mbid := r.URL.Query().Get("mbid")
+		if artist == "" || album == "" {
+			http.NotFound(w, r)
+			return
+		}
+		if u, cached, err := db.AlbumArt(artist, album); err == nil && cached {
+			if u == "" {
+				http.NotFound(w, r)
+				return
+			}
+			http.Redirect(w, r, u, http.StatusFound)
+			return
+		}
+		imageURL := resolveArt(mbid, artist, album)
+		_ = db.SetAlbumArt(artist, album, imageURL)
+		if imageURL == "" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, imageURL, http.StatusFound)
 	})
 
 	http.HandleFunc("/artists", func(w http.ResponseWriter, r *http.Request) {

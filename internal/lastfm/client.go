@@ -60,6 +60,58 @@ type recentTracksResponse struct {
 	} `json:"recenttracks"`
 }
 
+type albumInfoResponse struct {
+	Album struct {
+		Image []struct {
+			Text string `json:"#text"`
+			Size string `json:"size"`
+		} `json:"image"`
+	} `json:"album"`
+}
+
+// AlbumImageURL returns the URL of the best available image for the album,
+// or "" if none is found.
+func (c *Client) AlbumImageURL(artist, album string) (string, error) {
+	params := url.Values{
+		"method":  {"album.getInfo"},
+		"artist":  {artist},
+		"album":   {album},
+		"api_key": {c.apiKey},
+		"format":  {"json"},
+	}
+	req, err := http.NewRequest(http.MethodGet, apiBase+"?"+params.Encode(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "audiograph/0.1 (github.com/timdestan/audiograph)")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil
+	}
+
+	var result albumInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	bySize := make(map[string]string, len(result.Album.Image))
+	for _, img := range result.Album.Image {
+		bySize[img.Size] = img.Text
+	}
+	for _, size := range []string{"mega", "extralarge", "large"} {
+		if u := bySize[size]; u != "" {
+			return u, nil
+		}
+	}
+	return "", nil
+}
+
 // GetAllScrobbles fetches listening history for a user.
 // from restricts results to scrobbles after that time; zero means all time.
 // limit caps the number of scrobbles returned; 0 means no limit.

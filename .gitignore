@@ -1,3 +1,4 @@
+*.exe
 
 data/*.db
 data/*.json
