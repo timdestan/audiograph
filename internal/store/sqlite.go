@@ -103,6 +103,7 @@ type AlbumCount struct {
 	Album  string
 	Artist string
 	Plays  int
+	MBID   string
 }
 
 // TrackCount pairs a track+artist with a play count.
@@ -218,7 +219,7 @@ func (s *DB) TopAlbums(since time.Time, limit int) ([]AlbumCount, error) {
 	)
 	if since.IsZero() {
 		rows, err = s.db.Query(`
-			SELECT album, artist, COUNT(*) AS plays
+			SELECT album, artist, COUNT(*) AS plays, MAX(mbid_album) AS mbid
 			FROM scrobbles
 			GROUP BY album, artist
 			ORDER BY plays DESC
@@ -226,7 +227,7 @@ func (s *DB) TopAlbums(since time.Time, limit int) ([]AlbumCount, error) {
 		`, limit)
 	} else {
 		rows, err = s.db.Query(`
-			SELECT album, artist, COUNT(*) AS plays
+			SELECT album, artist, COUNT(*) AS plays, MAX(mbid_album) AS mbid
 			FROM scrobbles
 			WHERE played_at >= ?
 			GROUP BY album, artist
@@ -242,7 +243,7 @@ func (s *DB) TopAlbums(since time.Time, limit int) ([]AlbumCount, error) {
 	var out []AlbumCount
 	for rows.Next() {
 		var ac AlbumCount
-		if err := rows.Scan(&ac.Album, &ac.Artist, &ac.Plays); err != nil {
+		if err := rows.Scan(&ac.Album, &ac.Artist, &ac.Plays, &ac.MBID); err != nil {
 			return nil, err
 		}
 		out = append(out, ac)

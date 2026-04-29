@@ -70,6 +70,13 @@ const baseStyle = `
   a:hover { color: var(--active-fg); }
   .time  { color: var(--muted); white-space: nowrap; }
   .art   { width: 32px; height: 32px; object-fit: cover; vertical-align: middle; border-radius: 3px; margin-right: 6px; }
+  .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1rem; }
+  .album-card-art { aspect-ratio: 1; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 0.4rem; }
+  .album-card-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .album-card-art img[style*="display:none"] { display: none !important; }
+  .album-card-name { font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .album-card-sub  { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 0.15rem; }
+  .album-card-plays { font-size: 0.75rem; color: var(--muted); }
   .num   { text-align: right; color: var(--muted); }
   .periods { margin-bottom: 1rem; font-size: 0.85rem; }
   .periods a { margin-right: 0.75rem; color: var(--link); text-decoration: none; }
@@ -196,7 +203,9 @@ const tracksHTML = `<!DOCTYPE html>
 
 const albumsHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph – top albums</title>` + baseHeadScripts + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph – top albums</title>` + baseHeadScripts + baseStyle + `
+<style>body { max-width: 1400px; }</style>
+</head>
 <body>
 <h1>audiograph</h1>
 <nav>
@@ -213,19 +222,20 @@ const albumsHTML = `<!DOCTYPE html>
   <a href="/albums?period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
   <a href="/albums?period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
 </div>
-<table>
-  <thead><tr><th>#</th><th>Album</th><th>Artist</th><th class="num">Plays</th></tr></thead>
-  <tbody>
-  {{range $i, $a := .Albums}}
-  <tr>
-    <td class="num">{{inc $i}}</td>
-    <td>{{$a.Album}}</td>
-    <td><a href="/artist?name={{urlquery $a.Artist}}&period={{$.Period}}">{{$a.Artist}}</a></td>
-    <td class="num">{{$a.Plays}}</td>
-  </tr>
+<div class="album-grid">
+  {{range .Albums}}
+  <div class="album-card">
+    <a href="/artist?name={{urlquery .Artist}}&period={{$.Period}}">
+      <div class="album-card-art">
+        <img src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid={{urlquery .MBID}}" alt="{{.Album}}" loading="lazy" onerror="this.style.display='none'">
+      </div>
+    </a>
+    <div class="album-card-name" title="{{.Album}}">{{.Album}}</div>
+    <div class="album-card-sub"><a href="/artist?name={{urlquery .Artist}}&period={{$.Period}}">{{.Artist}}</a></div>
+    <div class="album-card-plays">{{.Plays}} plays</div>
+  </div>
   {{end}}
-  </tbody>
-</table>
+</div>
 ` + baseBodyScripts + `</body></html>`
 
 const artistDetailHTML = `<!DOCTYPE html>
@@ -302,7 +312,7 @@ const artistDetailHTML = `<!DOCTYPE html>
       {{range $i, $a := .Albums}}
       <tr>
         <td class="num">{{inc $i}}</td>
-        <td>{{$a.Name}}</td>
+        <td><img class="art" src="/art?artist={{urlquery $.Artist}}&album={{urlquery $a.Name}}&mbid=" alt="" loading="lazy" onerror="this.style.display='none'">{{$a.Name}}</td>
         <td class="num">{{$a.Plays}}</td>
       </tr>
       {{end}}
