@@ -397,6 +397,17 @@ type AlbumArtEntry struct {
 	URL    string
 }
 
+// ClearUnresolvedAlbumArt deletes all album_art rows where no URL was found,
+// allowing them to be re-resolved on the next prefetch. Returns the number
+// of rows removed.
+func (s *DB) ClearUnresolvedAlbumArt() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM album_art WHERE url = ''`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // AlbumArtEntries returns all album_art rows that have a resolved URL.
 // Used by the prefetch worker to download any that aren't yet on disk.
 func (s *DB) AlbumArtEntries() ([]AlbumArtEntry, error) {

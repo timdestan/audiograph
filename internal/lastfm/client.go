@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/timdestan/audiograph/internal/models"
@@ -20,12 +21,23 @@ const (
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	base       string
 }
 
 func New(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		base:       apiBase,
+	}
+}
+
+// newWithBase creates a Client with a custom base URL, used in tests.
+func newWithBase(apiKey, base string) *Client {
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		base:       base,
 	}
 }
 
@@ -69,9 +81,51 @@ type albumInfoResponse struct {
 	} `json:"album"`
 }
 
-// AlbumImageURL returns the URL of the best available image for the album,
-// or "" if none is found.
+// AlbumImageURL returns the URL of the best available image for the album.
+// If the exact name yields nothing, it retries with progressively simplified
+// names (e.g. "Piano Man (Remastered)" → "Piano Man").
+// Returns "" if no image is found.
 func (c *Client) AlbumImageURL(artist, album string) (string, error) {
+	if u, err := c.albumImageURLExact(artist, album); err != nil || u != "" {
+		return u, err
+	}
+	for _, simplified := range SimplifiedAlbumNames(album) {
+		if u, err := c.albumImageURLExact(artist, simplified); err == nil && u != "" {
+			return u, nil
+		}
+	}
+	return "", nil
+}
+
+// SimplifiedAlbumNames returns progressively stripped variants of an album
+// name by removing trailing parenthetical and bracketed annotations.
+//
+//	"Piano Man (Remastered)"        → ["Piano Man"]
+//	"Hits (Deluxe Edition) [2023]"  → ["Hits (Deluxe Edition)", "Hits"]
+//	"Normal Album"                  → []
+func SimplifiedAlbumNames(album string) []string {
+	var out []string
+	s := strings.TrimSpace(album)
+	for {
+		lp := strings.LastIndex(s, "(")
+		lb := strings.LastIndex(s, "[")
+		cut := lp
+		if lb > cut {
+			cut = lb
+		}
+		if cut < 0 {
+			break
+		}
+		s = strings.TrimSpace(s[:cut])
+		if s == "" {
+			break
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func (c *Client) albumImageURLExact(artist, album string) (string, error) {
 	params := url.Values{
 		"method":  {"album.getInfo"},
 		"artist":  {artist},
@@ -79,7 +133,7 @@ func (c *Client) AlbumImageURL(artist, album string) (string, error) {
 		"api_key": {c.apiKey},
 		"format":  {"json"},
 	}
-	req, err := http.NewRequest(http.MethodGet, apiBase+"?"+params.Encode(), nil)
+	req, err := http.NewRequest(http.MethodGet, c.base+"?"+params.Encode(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -181,7 +235,7 @@ func (c *Client) fetchPage(username string, from time.Time, page int) (*recentTr
 		params.Set("from", strconv.FormatInt(from.Unix(), 10))
 	}
 
-	req, err := http.NewRequest(http.MethodGet, apiBase+"?"+params.Encode(), nil)
+	req, err := http.NewRequest(http.MethodGet, c.base+"?"+params.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}

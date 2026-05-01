@@ -529,6 +529,13 @@ func main() {
 		return ""
 	}
 
+	// Clear stale "not found" entries so improved resolution logic gets a retry.
+	if n, err := db.ClearUnresolvedAlbumArt(); err != nil {
+		log.Printf("warning: clearing unresolved album art: %v", err)
+	} else if n > 0 {
+		log.Printf("cleared %d stale art cache entries for re-resolution", n)
+	}
+
 	// Prefetch album art in the background: first download already-resolved
 	// URLs that aren't on disk yet, then resolve and download new albums.
 	go func() {
