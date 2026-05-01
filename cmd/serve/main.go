@@ -85,6 +85,8 @@ const baseStyle = `
   .periods a:hover, .periods a.active { color: var(--active-fg); text-decoration: underline; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
   .chart-wrap { position: relative; height: 180px; margin-bottom: 1.5rem; }
+  .album-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+  .album-header-art { width: 80px; height: 80px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
 </style>`
 
 // baseBodyScripts is included once at the end of each page's <body>.
@@ -124,7 +126,7 @@ const recentHTML = `<!DOCTYPE html>
     <td class="time">{{formatTime .PlayedAt}}</td>
     <td><a href="/artist?name={{urlquery .Artist}}">{{.Artist}}</a></td>
     <td>{{.Track}}</td>
-    <td><img class="art" src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid={{urlquery .MBIDAlbum}}" alt="" loading="lazy" onerror="this.style.display='none'">{{.Album}}</td>
+    <td><img class="art" src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid={{urlquery .MBIDAlbum}}" alt="" loading="lazy" onerror="this.style.display='none'"><a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}">{{.Album}}</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -227,12 +229,12 @@ const albumsHTML = `<!DOCTYPE html>
 <div class="album-grid">
   {{range .Albums}}
   <div class="album-card">
-    <a href="/artist?name={{urlquery .Artist}}&period={{$.Period}}">
+    <a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period={{$.Period}}">
       <div class="album-card-art">
         <img src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid={{urlquery .MBID}}" alt="{{.Album}}" loading="lazy" onerror="this.style.display='none'">
       </div>
     </a>
-    <div class="album-card-name" title="{{.Album}}">{{.Album}}</div>
+    <div class="album-card-name" title="{{.Album}}"><a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period={{$.Period}}">{{.Album}}</a></div>
     <div class="album-card-sub"><a href="/artist?name={{urlquery .Artist}}&period={{$.Period}}">{{.Artist}}</a></div>
     <div class="album-card-plays">{{.Plays}} plays</div>
   </div>
@@ -314,7 +316,7 @@ const artistDetailHTML = `<!DOCTYPE html>
       {{range $i, $a := .Albums}}
       <tr>
         <td class="num">{{inc $i}}</td>
-        <td><img class="art" src="/art?artist={{urlquery $.Artist}}&album={{urlquery $a.Name}}&mbid=" alt="" loading="lazy" onerror="this.style.display='none'">{{$a.Name}}</td>
+        <td><img class="art" src="/art?artist={{urlquery $.Artist}}&album={{urlquery $a.Name}}&mbid=" alt="" loading="lazy" onerror="this.style.display='none'"><a href="/album?artist={{urlquery $.Artist}}&album={{urlquery $a.Name}}&period={{$.Period}}">{{$a.Name}}</a></td>
         <td class="num">{{$a.Plays}}</td>
       </tr>
       {{end}}
@@ -324,12 +326,85 @@ const artistDetailHTML = `<!DOCTYPE html>
 </div>
 ` + baseBodyScripts + `</body></html>`
 
+const albumDetailHTML = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>audiograph – {{.Album}}</title>` + baseHeadScripts + baseStyle + `</head>
+<body>
+<h1>audiograph</h1>
+<nav>
+  <a href="/">Recent</a>
+  <a href="/artists?period={{.Period}}">Top artists</a>
+  <a href="/albums?period={{.Period}}">Top albums</a>
+  <a href="/tracks?period={{.Period}}">Top tracks</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="toggleTheme()"></button>
+</nav>
+<div class="album-header">
+  <img class="album-header-art" src="/art?artist={{urlquery .Artist}}&album={{urlquery .Album}}&mbid=" alt="{{.Album}}" onerror="this.style.display='none'">
+  <div>
+    <h2 style="margin:0 0 0.25rem">{{.Album}}</h2>
+    <div><a href="/artist?name={{urlquery .Artist}}&period={{.Period}}">{{.Artist}}</a></div>
+  </div>
+</div>
+<div class="periods">
+  <a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
+  <a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period=30d" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
+  <a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
+  <a href="/album?artist={{urlquery .Artist}}&album={{urlquery .Album}}&period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
+</div>
+{{if .ChartLabels}}
+<div class="chart-wrap">
+  <canvas id="scrobble-chart"></canvas>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+(function(){
+  var dark = document.documentElement.classList.contains('dark');
+  var textColor = dark ? '#999' : '#666';
+  var gridColor = dark ? '#333' : '#e5e5e5';
+  new Chart(document.getElementById('scrobble-chart'), {
+    type: 'bar',
+    data: {
+      labels: {{.ChartLabels}},
+      datasets: [{ data: {{.ChartData}}, backgroundColor: '#4a90d9', borderRadius: 2,
+                   barPercentage: 0.5, categoryPercentage: 0.8 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: textColor } },
+        y: { beginAtZero: true, grid: { color: gridColor },
+             ticks: { color: textColor, precision: 0 },
+             title: { display: true, text: 'plays', color: textColor } }
+      }
+    }
+  });
+})();
+</script>
+{{end}}
+<table>
+  <thead><tr><th>#</th><th>Track</th><th class="num">Plays</th></tr></thead>
+  <tbody>
+  {{range $i, $t := .Tracks}}
+  <tr>
+    <td class="num">{{inc $i}}</td>
+    <td>{{$t.Name}}</td>
+    <td class="num">{{$t.Plays}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+` + baseBodyScripts + `</body></html>`
+
 type templates struct {
 	recent       *template.Template
 	artists      *template.Template
 	albums       *template.Template
 	tracks       *template.Template
 	artistDetail *template.Template
+	albumDetail  *template.Template
 }
 
 func buildTemplates() templates {
@@ -345,7 +420,8 @@ func buildTemplates() templates {
 	albums := template.Must(template.New("albums").Funcs(funcs).Parse(albumsHTML))
 	tracks := template.Must(template.New("tracks").Funcs(funcs).Parse(tracksHTML))
 	artistDetail := template.Must(template.New("artistDetail").Funcs(funcs).Parse(artistDetailHTML))
-	return templates{recent: recent, artists: artists, albums: albums, tracks: tracks, artistDetail: artistDetail}
+	albumDetail := template.Must(template.New("albumDetail").Funcs(funcs).Parse(albumDetailHTML))
+	return templates{recent: recent, artists: artists, albums: albums, tracks: tracks, artistDetail: artistDetail, albumDetail: albumDetail}
 }
 
 type recentData struct {
@@ -355,6 +431,15 @@ type recentData struct {
 	NextPage  int
 	HasNewer  bool
 	HasOlder  bool
+}
+
+type albumDetailData struct {
+	Artist      string
+	Album       string
+	Period      string
+	Tracks      []store.PlayCount
+	ChartLabels template.JS
+	ChartData   template.JS
 }
 
 type artistsData struct {
@@ -729,6 +814,40 @@ func main() {
 			Period:      period,
 			Tracks:      tracks,
 			Albums:      albums,
+			ChartLabels: chartLabels,
+			ChartData:   chartData,
+		}); err != nil {
+			log.Printf("template error: %v", err)
+		}
+	})
+
+	http.HandleFunc("/album", func(w http.ResponseWriter, r *http.Request) {
+		artist := r.URL.Query().Get("artist")
+		album := r.URL.Query().Get("album")
+		if artist == "" || album == "" {
+			http.Redirect(w, r, "/albums", http.StatusSeeOther)
+			return
+		}
+		since, period := parsePeriod(r.URL.Query().Get("period"))
+		tracks, err := db.TopTracksByAlbum(artist, album, since, pageLimit)
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		counts, err := db.AlbumScrobbleCountsByTime(artist, album, since, periodBucketFmt(period))
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		chartLabels, chartData := marshalChartData(counts)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.albumDetail.Execute(w, albumDetailData{
+			Artist:      artist,
+			Album:       album,
+			Period:      period,
+			Tracks:      tracks,
 			ChartLabels: chartLabels,
 			ChartData:   chartData,
 		}); err != nil {

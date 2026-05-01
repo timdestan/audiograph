@@ -408,6 +408,65 @@ func (s *DB) ClearUnresolvedAlbumArt() (int64, error) {
 	return res.RowsAffected()
 }
 
+// TopTracksByAlbum returns the most-played tracks for a specific album.
+func (s *DB) TopTracksByAlbum(artist, album string, since time.Time, limit int) ([]PlayCount, error) {
+	q := `SELECT track, COUNT(*) AS plays FROM scrobbles WHERE artist = ? AND album = ?`
+	args := []any{artist, album}
+	if !since.IsZero() {
+		q += ` AND played_at >= ?`
+		args = append(args, since.Unix())
+	}
+	q += ` GROUP BY track ORDER BY plays DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PlayCount
+	for rows.Next() {
+		var pc PlayCount
+		if err := rows.Scan(&pc.Name, &pc.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, pc)
+	}
+	return out, rows.Err()
+}
+
+// AlbumScrobbleCountsByTime returns play counts for an album grouped by the
+// given strftime format string. A zero since means all time.
+func (s *DB) AlbumScrobbleCountsByTime(artist, album string, since time.Time, bucketFmt string) ([]TimeCount, error) {
+	args := []any{bucketFmt, artist, album}
+	where := "WHERE artist = ? AND album = ?"
+	if !since.IsZero() {
+		where += " AND played_at >= ?"
+		args = append(args, since.Unix())
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT strftime(?, datetime(played_at, 'unixepoch')), COUNT(*)
+		FROM scrobbles %s
+		GROUP BY 1 ORDER BY 1
+	`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TimeCount
+	for rows.Next() {
+		var tc TimeCount
+		if err := rows.Scan(&tc.Label, &tc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, tc)
+	}
+	return out, rows.Err()
+}
+
 // AlbumArtEntries returns all album_art rows that have a resolved URL.
 // Used by the prefetch worker to download any that aren't yet on disk.
 func (s *DB) AlbumArtEntries() ([]AlbumArtEntry, error) {
