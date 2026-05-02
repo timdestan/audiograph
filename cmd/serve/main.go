@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/timdestan/audiograph/internal/artcache"
@@ -538,17 +539,32 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-func parsePeriod(s string) (time.Time, string) {
+// parsePeriod parses a period string of the form <n><unit> where unit is one
+// of d (days), w (weeks), m (months), or y (years). The empty string and
+// "all" both mean all time. Examples: "7d", "27d", "4w", "3m", "1y".
+func parsePeriod(s string) (time.Time, string, error) {
+	if s == "" || s == "all" {
+		return time.Time{}, "all", nil
+	}
+	if len(s) < 2 {
+		return time.Time{}, "", fmt.Errorf("unknown period %q", s)
+	}
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || n <= 0 {
+		return time.Time{}, "", fmt.Errorf("unknown period %q", s)
+	}
 	now := time.Now()
-	switch s {
-	case "7d":
-		return now.AddDate(0, 0, -7), "7d"
-	case "30d":
-		return now.AddDate(0, 0, -30), "30d"
-	case "1y":
-		return now.AddDate(-1, 0, 0), "1y"
+	switch s[len(s)-1] {
+	case 'd':
+		return now.AddDate(0, 0, -n), s, nil
+	case 'w':
+		return now.AddDate(0, 0, -n*7), s, nil
+	case 'm':
+		return now.AddDate(0, -n, 0), s, nil
+	case 'y':
+		return now.AddDate(-n, 0, 0), s, nil
 	default:
-		return time.Time{}, "all"
+		return time.Time{}, "", fmt.Errorf("unknown period %q", s)
 	}
 }
 
@@ -741,7 +757,11 @@ func main() {
 	})
 
 	http.HandleFunc("/artists", func(w http.ResponseWriter, r *http.Request) {
-		since, period := parsePeriod(r.URL.Query().Get("period"))
+		since, period, err := parsePeriod(r.URL.Query().Get("period"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		artists, err := db.TopArtists(since, pageLimit)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
@@ -755,7 +775,11 @@ func main() {
 	})
 
 	http.HandleFunc("/albums", func(w http.ResponseWriter, r *http.Request) {
-		since, period := parsePeriod(r.URL.Query().Get("period"))
+		since, period, err := parsePeriod(r.URL.Query().Get("period"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		albums, err := db.TopAlbums(since, pageLimit)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
@@ -769,7 +793,11 @@ func main() {
 	})
 
 	http.HandleFunc("/tracks", func(w http.ResponseWriter, r *http.Request) {
-		since, period := parsePeriod(r.URL.Query().Get("period"))
+		since, period, err := parsePeriod(r.URL.Query().Get("period"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		tracks, err := db.TopTracks(since, pageLimit)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
@@ -788,7 +816,11 @@ func main() {
 			http.Redirect(w, r, "/artists", http.StatusSeeOther)
 			return
 		}
-		since, period := parsePeriod(r.URL.Query().Get("period"))
+		since, period, err := parsePeriod(r.URL.Query().Get("period"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		tracks, err := db.TopTracksByArtist(artist, since, pageLimit)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
@@ -828,7 +860,11 @@ func main() {
 			http.Redirect(w, r, "/albums", http.StatusSeeOther)
 			return
 		}
-		since, period := parsePeriod(r.URL.Query().Get("period"))
+		since, period, err := parsePeriod(r.URL.Query().Get("period"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		tracks, err := db.TopTracksByAlbum(artist, album, since, pageLimit)
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
