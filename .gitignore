@@ -6,4 +6,5 @@ data/*.csv
 
 data/LASTFM_API_KEY.md
 
-.claude/*
+.claude/
+.idea/
