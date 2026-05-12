@@ -141,7 +141,14 @@ const recentHTML = `<!DOCTYPE html>
 
 const artistsHTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>audiograph – top artists</title>` + baseHeadScripts + baseStyle + `</head>
+<head><meta charset="utf-8"><title>audiograph – top artists</title>` + baseHeadScripts + baseStyle + `
+<style>
+  .bar-row   { display: flex; align-items: center; gap: 0.5rem; }
+  .bar-track { flex: 1; height: 10px; }
+  .bar-fill  { height: 100%; background: #4a90d9; border-radius: 2px; min-width: 2px; }
+  .bar-label { min-width: 3.5rem; text-align: right; color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+</style>
+</head>
 <body>
 <h1>audiograph</h1>
 <nav>
@@ -159,13 +166,18 @@ const artistsHTML = `<!DOCTYPE html>
   <a href="/artists?period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
 </div>
 <table>
-  <thead><tr><th>#</th><th>Artist</th><th class="num">Plays</th></tr></thead>
+  <thead><tr><th>#</th><th>Artist</th><th>Plays</th></tr></thead>
   <tbody>
   {{range $i, $a := .Artists}}
   <tr>
     <td class="num">{{inc $i}}</td>
     <td><a href="/artist?name={{urlquery $a.Artist}}&period={{$.Period}}">{{$a.Artist}}</a></td>
-    <td class="num">{{$a.Plays}}</td>
+    <td>
+      <div class="bar-row">
+        <div class="bar-track"><div class="bar-fill" style="width:{{pct $a.Plays $.MaxPlays}}%"></div></div>
+        <span class="bar-label">{{$a.Plays}}</span>
+      </div>
+    </td>
   </tr>
   {{end}}
   </tbody>
@@ -415,6 +427,12 @@ func buildTemplates() templates {
 		"formatTime": func(t time.Time) string {
 			return t.Local().Format("2006-01-02 15:04")
 		},
+		"pct": func(n, max int) int {
+			if max == 0 {
+				return 0
+			}
+			return 100 * n / max
+		},
 	}
 	recent := template.Must(template.New("recent").Funcs(funcs).Parse(recentHTML))
 	artists := template.Must(template.New("artists").Funcs(funcs).Parse(artistsHTML))
@@ -444,8 +462,9 @@ type albumDetailData struct {
 }
 
 type artistsData struct {
-	Period  string
-	Artists []store.ArtistCount
+	Period   string
+	Artists  []store.ArtistCount
+	MaxPlays int
 }
 
 type albumsData struct {
@@ -768,8 +787,14 @@ func main() {
 			log.Printf("query error: %v", err)
 			return
 		}
+		maxPlays := 0
+		for _, a := range artists {
+			if a.Plays > maxPlays {
+				maxPlays = a.Plays
+			}
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.artists.Execute(w, artistsData{Period: period, Artists: artists}); err != nil {
+		if err := tmpl.artists.Execute(w, artistsData{Period: period, Artists: artists, MaxPlays: maxPlays}); err != nil {
 			log.Printf("template error: %v", err)
 		}
 	})
