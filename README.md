@@ -17,25 +17,25 @@ export LASTFM_API_KEY=your_api_key_here
 
 ## Commands
 
-### `audiograph` — import scrobbles
+### `audiograph import` — import scrobbles
 
 Fetches your listening history from last.fm and writes it to a local SQLite database.
 
 ```bash
 # Full import into the default database (data/audiograph.db)
-go run ./cmd/audiograph -user YOUR_USERNAME
+go run ./cmd/audiograph import -user YOUR_USERNAME
 
 # Incremental update — only fetches scrobbles since the last import
-go run ./cmd/audiograph -user YOUR_USERNAME
+go run ./cmd/audiograph import -user YOUR_USERNAME
 
 # Limit the number of scrobbles (useful for testing)
-go run ./cmd/audiograph -user YOUR_USERNAME -limit 50
+go run ./cmd/audiograph import -user YOUR_USERNAME -limit 50
 
 # Export to JSON in addition to the database
-go run ./cmd/audiograph -user YOUR_USERNAME -out data/scrobbles.json
+go run ./cmd/audiograph import -user YOUR_USERNAME -out data/scrobbles.json
 
 # Export to CSV in addition to the database
-go run ./cmd/audiograph -user YOUR_USERNAME -out data/scrobbles.csv -format csv
+go run ./cmd/audiograph import -user YOUR_USERNAME -out data/scrobbles.csv -format csv
 ```
 
 Running the import a second time is safe — duplicate scrobbles are skipped automatically.
@@ -50,6 +50,31 @@ Running the import a second time is safe — duplicate scrobbles are skipped aut
 | `-out` | stdout | Output file path (JSON/CSV) |
 | `-format` | `json` | Output format: `json` or `csv` |
 | `-limit` | `0` (all) | Max scrobbles to fetch |
+
+### `audiograph purge` — delete scrobbles
+
+Deletes scrobbles in a time range from the database. Useful for removing erroneous or duplicate plays.
+
+```bash
+# Preview what would be deleted (no changes made)
+go run ./cmd/audiograph purge -from 2024-01-15 -to 2024-01-15 -dry-run
+
+# Delete all scrobbles on a specific day
+go run ./cmd/audiograph purge -from 2024-01-15 -to 2024-01-15
+
+# Delete a precise time range, skipping the confirmation prompt
+go run ./cmd/audiograph purge -from "2024-01-15 14:00" -to "2024-01-15 15:30" -yes
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-from` | *(required)* | Start of range to delete, inclusive (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`) |
+| `-to` | *(required)* | End of range to delete, inclusive (`YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`) |
+| `-db` | `data/audiograph.db` | SQLite database path |
+| `-dry-run` | `false` | Show what would be deleted without deleting |
+| `-yes` | `false` | Skip confirmation prompt |
 
 ### `serve` — browse locally
 
@@ -78,5 +103,5 @@ Then open http://localhost:8080 in your browser.
 
 ```bash
 go build -o audiograph ./cmd/audiograph
-go build -o serve     ./cmd/serve
+go build -o serve      ./cmd/serve
 ```
