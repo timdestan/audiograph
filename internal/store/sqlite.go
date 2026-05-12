@@ -296,7 +296,7 @@ func (s *DB) TopTracks(since time.Time, limit int) ([]TrackCount, error) {
 // topByField queries play counts grouped by a column (track or album) for one artist.
 // field must be a trusted internal constant, never user input.
 func (s *DB) topByField(field, artist string, since time.Time, limit int) ([]PlayCount, error) {
-	q := fmt.Sprintf(`SELECT %s, COUNT(*) AS plays FROM scrobbles WHERE artist = ?`, field)
+	q := fmt.Sprintf(`SELECT %s, COUNT(*) AS plays FROM scrobbles WHERE artist = ? AND %s != ''`, field, field)
 	args := []any{artist}
 	if !since.IsZero() {
 		q += ` AND played_at >= ?`
