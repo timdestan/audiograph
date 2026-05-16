@@ -348,6 +348,38 @@ func TestAlbumArt_GetSet(t *testing.T) {
 	}
 }
 
+func TestClearUnresolvedAlbumArt(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := db.SetAlbumArt("Artist", "Miss", ""); err != nil {
+		t.Fatalf("SetAlbumArt: %v", err)
+	}
+
+	// Cutoff in the past — entry is newer, should not be cleared.
+	n, err := db.ClearUnresolvedAlbumArt(time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("ClearUnresolvedAlbumArt: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("cleared %d rows with past cutoff, want 0", n)
+	}
+	if _, cached, _ := db.AlbumArt("Artist", "Miss"); !cached {
+		t.Error("Miss should still be cached after past-cutoff clear")
+	}
+
+	// Cutoff in the future — entry is older, should be cleared.
+	n, err = db.ClearUnresolvedAlbumArt(time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("ClearUnresolvedAlbumArt: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("cleared %d rows with future cutoff, want 1", n)
+	}
+	if _, cached, _ := db.AlbumArt("Artist", "Miss"); cached {
+		t.Error("Miss should have been cleared by future-cutoff clear")
+	}
+}
+
 // --- CountInRange / DeleteRange ---
 
 func TestCountInRange_DeleteRange(t *testing.T) {

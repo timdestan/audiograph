@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/timdestan/audiograph/internal/models"
@@ -51,6 +52,13 @@ func Open(path string) (*DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
+	}
+	// Add resolved_at to album_art if this is an older database.
+	if _, err := db.Exec(`ALTER TABLE album_art ADD COLUMN resolved_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrating album_art: %w", err)
+		}
 	}
 	return &DB{db: db}, nil
 }
@@ -360,8 +368,8 @@ func (s *DB) AlbumArt(artist, album string) (url string, cached bool, err error)
 // Pass an empty url to record that no art was found, preventing future lookups.
 func (s *DB) SetAlbumArt(artist, album, url string) error {
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO album_art (artist, album, url) VALUES (?, ?, ?)`,
-		artist, album, url,
+		`INSERT OR REPLACE INTO album_art (artist, album, url, resolved_at) VALUES (?, ?, ?, ?)`,
+		artist, album, url, time.Now().Unix(),
 	)
 	return err
 }
@@ -403,11 +411,14 @@ type AlbumArtEntry struct {
 	URL    string
 }
 
-// ClearUnresolvedAlbumArt deletes all album_art rows where no URL was found,
-// allowing them to be re-resolved on the next prefetch. Returns the number
-// of rows removed.
-func (s *DB) ClearUnresolvedAlbumArt() (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM album_art WHERE url = ''`)
+// ClearUnresolvedAlbumArt deletes "not found" album_art rows that were
+// resolved before the given cutoff, allowing them to be retried on the next
+// prefetch. Returns the number of rows removed.
+func (s *DB) ClearUnresolvedAlbumArt(before time.Time) (int64, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM album_art WHERE url = '' AND resolved_at < ?`,
+		before.Unix(),
+	)
 	if err != nil {
 		return 0, err
 	}

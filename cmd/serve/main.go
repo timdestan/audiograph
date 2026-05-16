@@ -627,9 +627,11 @@ func serveImage(w http.ResponseWriter, data []byte) {
 }
 
 func main() {
-	dbPath  := flag.String("db", "data/audiograph.db", "path to SQLite database")
-	addr    := flag.String("addr", "localhost:8080", "listen address")
-	apiKey  := flag.String("api-key", "", "last.fm API key for album art fallback (or set LASTFM_API_KEY)")
+	var (
+		dbPath = flag.String("db", "data/audiograph.db", "path to SQLite database")
+		addr   = flag.String("addr", "localhost:8080", "listen address")
+		apiKey = flag.String("api-key", "", "last.fm API key for album art fallback (or set LASTFM_API_KEY)")
+	)
 	flag.Parse()
 
 	db, err := store.Open(*dbPath)
@@ -682,8 +684,8 @@ func main() {
 		return ""
 	}
 
-	// Clear stale "not found" entries so improved resolution logic gets a retry.
-	if n, err := db.ClearUnresolvedAlbumArt(); err != nil {
+	// Expire "not found" entries older than 30 days so they get another attempt.
+	if n, err := db.ClearUnresolvedAlbumArt(time.Now().AddDate(0, 0, -30)); err != nil {
 		log.Printf("warning: clearing unresolved album art: %v", err)
 	} else if n > 0 {
 		log.Printf("cleared %d stale art cache entries for re-resolution", n)
@@ -721,7 +723,10 @@ func main() {
 		resolved := 0
 		for _, a := range unresolved {
 			imageURL := resolveArt(a.MBID, a.Artist, a.Album)
-			_ = db.SetAlbumArt(a.Artist, a.Album, imageURL)
+			err = db.SetAlbumArt(a.Artist, a.Album, imageURL)
+			if err != nil {
+				log.Printf("prefetch: failed to save album art for %s/%s", a.Artist, a.Album)
+			}
 			if imageURL != "" {
 				if _, err := artCache.Fetch(imageURL, a.Artist, a.Album); err != nil {
 					log.Printf("prefetch: %s/%s: %v", a.Artist, a.Album, err)
