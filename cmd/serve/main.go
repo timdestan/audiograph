@@ -649,9 +649,9 @@ func main() {
 	var lfm *lastfm.Client
 	if key != "" {
 		lfm = lastfm.New(key)
-		log.Println("last.fm API key provided — album art fallback enabled")
+		log.Println("✅ last.fm API key provided — album art fallback enabled")
 	} else {
-		log.Println("no last.fm API key — set -api-key or LASTFM_API_KEY to enable album art fallback")
+		log.Println("❌ no last.fm API key — set -api-key or LASTFM_API_KEY to enable album art fallback")
 	}
 
 	artCache, err := artcache.New(filepath.Join(os.TempDir(), "audiograph-art"))
