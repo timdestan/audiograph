@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS scrobbles (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scrobbles_key ON scrobbles(played_at, artist, track);
 CREATE INDEX IF NOT EXISTS idx_scrobbles_played_at ON scrobbles(played_at);
 CREATE INDEX IF NOT EXISTS idx_scrobbles_artist    ON scrobbles(artist);
+CREATE TABLE IF NOT EXISTS artist_tags (
+	artist TEXT NOT NULL,
+	tag    TEXT NOT NULL,
+	PRIMARY KEY (artist, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_artist_tags_tag ON artist_tags(tag);
 `
 
 // DB wraps a SQLite connection for scrobble storage.
@@ -511,6 +517,113 @@ func (s *DB) UnresolvedAlbums() ([]AlbumRef, error) {
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// AddArtistTag adds a tag to an artist (idempotent).
+func (s *DB) AddArtistTag(artist, tag string) error {
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO artist_tags (artist, tag) VALUES (?, ?)`,
+		artist, tag,
+	)
+	return err
+}
+
+// RemoveArtistTag removes a tag from an artist.
+func (s *DB) RemoveArtistTag(artist, tag string) error {
+	_, err := s.db.Exec(
+		`DELETE FROM artist_tags WHERE artist = ? AND tag = ?`,
+		artist, tag,
+	)
+	return err
+}
+
+// ArtistTags returns all tags for an artist, sorted alphabetically.
+func (s *DB) ArtistTags(artist string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT tag FROM artist_tags WHERE artist = ? ORDER BY tag`,
+		artist,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// AllTags returns all distinct tags across all artists, sorted alphabetically.
+func (s *DB) AllTags() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT tag FROM artist_tags ORDER BY tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// AllArtistTags returns a map of artist -> []tag for all tagged artists.
+func (s *DB) AllArtistTags() (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT artist, tag FROM artist_tags ORDER BY artist, tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string][]string)
+	for rows.Next() {
+		var artist, tag string
+		if err := rows.Scan(&artist, &tag); err != nil {
+			return nil, err
+		}
+		out[artist] = append(out[artist], tag)
+	}
+	return out, rows.Err()
+}
+
+// TopArtistsByTag returns artists that have the given tag, ranked by play count.
+// A zero since means all time.
+func (s *DB) TopArtistsByTag(tag string, since time.Time, limit int) ([]ArtistCount, error) {
+	q := `
+		SELECT s.artist, COUNT(*) AS plays
+		FROM scrobbles s
+		INNER JOIN artist_tags t ON t.artist = s.artist AND t.tag = ?`
+	args := []any{tag}
+	if !since.IsZero() {
+		q += ` WHERE s.played_at >= ?`
+		args = append(args, since.Unix())
+	}
+	q += ` GROUP BY s.artist ORDER BY plays DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ArtistCount
+	for rows.Next() {
+		var ac ArtistCount
+		if err := rows.Scan(&ac.Artist, &ac.Plays); err != nil {
+			return nil, err
+		}
+		out = append(out, ac)
 	}
 	return out, rows.Err()
 }

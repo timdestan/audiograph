@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/timdestan/audiograph/internal/artcache"
@@ -88,6 +89,24 @@ const baseStyle = `
   .chart-wrap { position: relative; height: 180px; margin-bottom: 1.5rem; }
   .album-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
   .album-header-art { width: 80px; height: 80px; object-fit: cover; border-radius: 4px; flex-shrink: 0; }
+  .tag-chip { display:inline-flex; align-items:center; gap:3px; background:#e8f0fe; color:#1a73e8;
+              border-radius:3px; padding:1px 6px; font-size:0.78rem; text-decoration:none; margin-left:4px; }
+  :root.dark .tag-chip { background:#1c3a6e; color:#7baaf7; }
+  .tag-chip:hover { opacity:0.8; }
+  .tag-remove-btn { background:none; border:none; cursor:pointer; color:inherit; padding:0 0 0 2px;
+                    font-size:0.9rem; line-height:1; opacity:0.6; }
+  .tag-remove-btn:hover { opacity:1; }
+  .tags-row { display:flex; align-items:center; flex-wrap:wrap; gap:0.3rem; margin:0.4rem 0 0.8rem; }
+  .tags-row .tag-chip { margin-left:0; }
+  .tag-add-form { display:inline-flex; gap:0.3rem; align-items:center; }
+  .tag-add-form input[type="text"] { font:inherit; font-size:0.8rem; padding:2px 6px;
+                                     border:1px solid var(--border); background:var(--bg);
+                                     color:var(--fg); border-radius:3px; width:100px; }
+  .tag-add-form button { font:inherit; font-size:0.8rem; padding:2px 8px; cursor:pointer;
+                         border:1px solid var(--border); background:var(--hover-bg); color:var(--fg); border-radius:3px; }
+  .tag-filters { margin-bottom:0.5rem; font-size:0.85rem; }
+  .tag-filters a { margin-right:0.5rem; color:var(--link); text-decoration:none; }
+  .tag-filters a:hover, .tag-filters a.active { color:var(--active-fg); text-decoration:underline; }
 </style>`
 
 // baseBodyScripts is included once at the end of each page's <body>.
@@ -160,18 +179,25 @@ const artistsHTML = `<!DOCTYPE html>
   <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
 <div class="periods">
-  <a href="/artists?period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
-  <a href="/artists?period=30d" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
-  <a href="/artists?period=1y"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
-  <a href="/artists?period=all" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
+  <a href="/artists?period=7d{{if .ActiveTag}}&tag={{urlquery .ActiveTag}}{{end}}"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
+  <a href="/artists?period=30d{{if .ActiveTag}}&tag={{urlquery .ActiveTag}}{{end}}" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
+  <a href="/artists?period=1y{{if .ActiveTag}}&tag={{urlquery .ActiveTag}}{{end}}"  {{if eq .Period "1y" }}class="active"{{end}}>1 year</a>
+  <a href="/artists?period=all{{if .ActiveTag}}&tag={{urlquery .ActiveTag}}{{end}}" {{if eq .Period "all"}}class="active"{{end}}>All time</a>
 </div>
+{{if .AllTags}}<div class="tag-filters">
+  <a href="/artists?period={{.Period}}" {{if eq .ActiveTag ""}}class="active"{{end}}>All</a>
+  {{range .AllTags}}<a href="/artists?period={{$.Period}}&tag={{urlquery .}}" {{if eq . $.ActiveTag}}class="active"{{end}}>{{.}}</a>{{end}}
+</div>{{end}}
 <table>
   <thead><tr><th>#</th><th>Artist</th><th>Plays</th></tr></thead>
   <tbody>
   {{range $i, $a := .Artists}}
   <tr>
     <td class="num">{{inc $i}}</td>
-    <td><a href="/artist?name={{urlquery $a.Artist}}&period={{$.Period}}">{{$a.Artist}}</a></td>
+    <td>
+      <a href="/artist?name={{urlquery $a.Artist}}&period={{$.Period}}">{{$a.Artist}}</a>
+      {{range index $.TagMap $a.Artist}}<a class="tag-chip" href="/artists?period={{$.Period}}&tag={{urlquery .}}">{{.}}</a>{{end}}
+    </td>
     <td>
       <div class="bar-row">
         <div class="bar-track"><div class="bar-fill" style="width:{{pct $a.Plays $.MaxPlays}}%"></div></div>
@@ -269,6 +295,9 @@ const artistDetailHTML = `<!DOCTYPE html>
   <button class="theme-btn" onclick="toggleTheme()"></button>
 </nav>
 <h2>{{.Artist}}</h2>
+<div class="tags-row">
+  {{range .Tags}}<span class="tag-chip">{{.}}<form method="POST" action="/artist/untag" style="display:inline;margin:0"><input type="hidden" name="artist" value="{{$.Artist}}"><input type="hidden" name="tag" value="{{.}}"><input type="hidden" name="period" value="{{$.Period}}"><button type="submit" class="tag-remove-btn" title="Remove tag">×</button></form></span>{{end}}<form class="tag-add-form" method="POST" action="/artist/tag"><input type="hidden" name="artist" value="{{.Artist}}"><input type="hidden" name="period" value="{{.Period}}"><input type="text" name="tag" placeholder="add tag…"><button type="submit">+</button></form>
+</div>
 <div class="periods">
   <a href="/artist?name={{urlquery .Artist}}&period=7d"  {{if eq .Period "7d" }}class="active"{{end}}>7 days</a>
   <a href="/artist?name={{urlquery .Artist}}&period=30d" {{if eq .Period "30d"}}class="active"{{end}}>30 days</a>
@@ -462,9 +491,12 @@ type albumDetailData struct {
 }
 
 type artistsData struct {
-	Period   string
-	Artists  []store.ArtistCount
-	MaxPlays int
+	Period    string
+	ActiveTag string
+	Artists   []store.ArtistCount
+	MaxPlays  int
+	AllTags   []string
+	TagMap    map[string][]string
 }
 
 type albumsData struct {
@@ -480,6 +512,7 @@ type tracksData struct {
 type artistDetailData struct {
 	Artist      string
 	Period      string
+	Tags        []string
 	Tracks      []store.PlayCount
 	Albums      []store.PlayCount
 	ChartLabels template.JS
@@ -781,7 +814,25 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		artists, err := db.TopArtists(since, pageLimit)
+		activeTag := r.URL.Query().Get("tag")
+		var artists []store.ArtistCount
+		if activeTag != "" {
+			artists, err = db.TopArtistsByTag(activeTag, since, pageLimit)
+		} else {
+			artists, err = db.TopArtists(since, pageLimit)
+		}
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		allTags, err := db.AllTags()
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
+		tagMap, err := db.AllArtistTags()
 		if err != nil {
 			http.Error(w, "database error", http.StatusInternalServerError)
 			log.Printf("query error: %v", err)
@@ -794,7 +845,14 @@ func main() {
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.artists.Execute(w, artistsData{Period: period, Artists: artists, MaxPlays: maxPlays}); err != nil {
+		if err := tmpl.artists.Execute(w, artistsData{
+			Period:    period,
+			ActiveTag: activeTag,
+			Artists:   artists,
+			MaxPlays:  maxPlays,
+			AllTags:   allTags,
+			TagMap:    tagMap,
+		}); err != nil {
 			log.Printf("template error: %v", err)
 		}
 	})
@@ -864,11 +922,18 @@ func main() {
 			log.Printf("query error: %v", err)
 			return
 		}
+		tags, err := db.ArtistTags(artist)
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("query error: %v", err)
+			return
+		}
 		chartLabels, chartData := marshalChartData(counts)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.artistDetail.Execute(w, artistDetailData{
 			Artist:      artist,
 			Period:      period,
+			Tags:        tags,
 			Tracks:      tracks,
 			Albums:      albums,
 			ChartLabels: chartLabels,
@@ -914,6 +979,54 @@ func main() {
 		}); err != nil {
 			log.Printf("template error: %v", err)
 		}
+	})
+
+	http.HandleFunc("/artist/tag", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		artist := r.FormValue("artist")
+		tag := strings.ToLower(strings.TrimSpace(r.FormValue("tag")))
+		period := r.FormValue("period")
+		if artist == "" || tag == "" {
+			http.Error(w, "artist and tag required", http.StatusBadRequest)
+			return
+		}
+		if err := db.AddArtistTag(artist, tag); err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("add tag error: %v", err)
+			return
+		}
+		http.Redirect(w, r, "/artist?name="+url.QueryEscape(artist)+"&period="+period, http.StatusSeeOther)
+	})
+
+	http.HandleFunc("/artist/untag", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		artist := r.FormValue("artist")
+		tag := r.FormValue("tag")
+		period := r.FormValue("period")
+		if artist == "" || tag == "" {
+			http.Error(w, "artist and tag required", http.StatusBadRequest)
+			return
+		}
+		if err := db.RemoveArtistTag(artist, tag); err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("remove tag error: %v", err)
+			return
+		}
+		http.Redirect(w, r, "/artist?name="+url.QueryEscape(artist)+"&period="+period, http.StatusSeeOther)
 	})
 
 	fmt.Printf("Listening on http://%s\n", *addr)
