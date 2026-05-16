@@ -513,7 +513,7 @@ func (s *DB) UnresolvedAlbums() ([]AlbumRef, error) {
 		SELECT s.artist, s.album, MAX(s.mbid_album) AS mbid
 		FROM scrobbles s
 		LEFT JOIN album_art aa ON aa.artist = s.artist AND aa.album = s.album
-		WHERE aa.artist IS NULL
+		WHERE aa.artist IS NULL AND s.album != ''
 		GROUP BY s.artist, s.album
 	`)
 	if err != nil {
