@@ -81,9 +81,63 @@ type albumInfoResponse struct {
 	} `json:"album"`
 }
 
+type artistTopAlbumsResponse struct {
+	TopAlbums struct {
+		Album []struct {
+			Name string `json:"name"`
+		} `json:"album"`
+	} `json:"topalbums"`
+}
+
+// accentReplacer strips common Latin diacritics for fuzzy name matching.
+var accentReplacer = strings.NewReplacer(
+	"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a",
+	"è", "e", "é", "e", "ê", "e", "ë", "e",
+	"ì", "i", "í", "i", "î", "i", "ï", "i",
+	"ò", "o", "ó", "o", "ô", "o", "õ", "o", "ö", "o",
+	"ù", "u", "ú", "u", "û", "u", "ü", "u",
+	"ý", "y", "ÿ", "y",
+	"ñ", "n",
+	"ç", "c",
+)
+
+// normalizeForMatching reduces an album name to a canonical form for fuzzy
+// comparison: lowercase, accents stripped, trailing parenthetical/bracketed
+// annotations removed, leading articles and trailing release-type tokens
+// removed.
+func normalizeForMatching(s string) string {
+	s = accentReplacer.Replace(strings.ToLower(strings.TrimSpace(s)))
+	for {
+		cut := strings.LastIndexAny(s, "([")
+		if cut <= 0 {
+			break
+		}
+		if candidate := strings.TrimSpace(s[:cut]); candidate != "" {
+			s = candidate
+		} else {
+			break
+		}
+	}
+	for _, prefix := range []string{"the ", "a ", "an "} {
+		if after, ok := strings.CutPrefix(s, prefix); ok {
+			s = after
+			break
+		}
+	}
+	for _, suffix := range []string{" ep", " cd", " lp", " single"} {
+		if before, ok := strings.CutSuffix(s, suffix); ok {
+			s = before
+			break
+		}
+	}
+	return s
+}
+
 // AlbumImageURL returns the URL of the best available image for the album.
 // If the exact name yields nothing, it retries with progressively simplified
-// names (e.g. "Piano Man (Remastered)" → "Piano Man").
+// names (e.g. "Piano Man (Remastered)" → "Piano Man"), then falls back to
+// fetching the artist's top albums and matching by normalized name to handle
+// cases like "Rock Soldier EP" → "The Rock Soldier CD" or accent differences.
 // Returns "" if no image is found.
 func (c *Client) AlbumImageURL(artist, album string) (string, error) {
 	if u, err := c.albumImageURLExact(artist, album); err != nil || u != "" {
@@ -94,14 +148,69 @@ func (c *Client) AlbumImageURL(artist, album string) (string, error) {
 			return u, nil
 		}
 	}
+	// Last resort: fetch the artist's canonical album list and match by
+	// normalized name to handle title differences and accent mismatches.
+	topAlbums, err := c.artistTopAlbums(artist)
+	if err != nil {
+		return "", err
+	}
+	normalized := normalizeForMatching(album)
+	// log.Printf("normalized: %s => %s", album, normalized)
+
+	for _, canonical := range topAlbums {
+		if normalizeForMatching(canonical) == normalized {
+			if u, err := c.albumImageURLExact(artist, canonical); err == nil && u != "" {
+				return u, nil
+			}
+		}
+	}
 	return "", nil
 }
 
+func (c *Client) artistTopAlbums(artist string) ([]string, error) {
+	params := url.Values{
+		"method":  {"artist.getTopAlbums"},
+		"artist":  {artist},
+		"api_key": {c.apiKey},
+		"format":  {"json"},
+		"limit":   {"50"},
+	}
+	req, err := http.NewRequest(http.MethodGet, c.base+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "audiograph/0.1 (github.com/timdestan/audiograph)")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var result artistTopAlbumsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(result.TopAlbums.Album))
+	for _, a := range result.TopAlbums.Album {
+		names = append(names, a.Name)
+	}
+	return names, nil
+}
+
 // SimplifiedAlbumNames returns progressively stripped variants of an album
-// name by removing trailing parenthetical and bracketed annotations.
+// name by removing trailing parenthetical/bracketed annotations and the " EP"
+// suffix.
 //
 //	"Piano Man (Remastered)"        → ["Piano Man"]
 //	"Hits (Deluxe Edition) [2023]"  → ["Hits (Deluxe Edition)", "Hits"]
+//	"Some Album EP"                 → ["Some Album"]
+//	"Some Album EP (Deluxe)"        → ["Some Album EP", "Some Album"]
 //	"Normal Album"                  → []
 func SimplifiedAlbumNames(album string) []string {
 	var out []string
@@ -116,6 +225,16 @@ func SimplifiedAlbumNames(album string) []string {
 			break
 		}
 		out = append(out, s)
+	}
+	seen := make(map[string]bool, len(out))
+	for _, v := range out {
+		seen[v] = true
+	}
+	for _, v := range append([]string{strings.TrimSpace(album)}, out...) {
+		if trimmed, ok := strings.CutSuffix(v, " EP"); ok && trimmed != "" && !seen[trimmed] {
+			out = append(out, trimmed)
+			seen[trimmed] = true
+		}
 	}
 	return out
 }

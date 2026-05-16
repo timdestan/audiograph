@@ -20,6 +20,9 @@ func TestSimplifiedAlbumNames(t *testing.T) {
 		{"Abbey Road", nil},
 		{"  Album Name (Live)  ", []string{"Album Name"}},
 		{"A (B) (C) (D)", []string{"A (B) (C)", "A (B)", "A"}},
+		{"Some Album EP", []string{"Some Album"}},
+		{"Some Album EP (Deluxe)", []string{"Some Album EP", "Some Album"}},
+		{"EP", nil},
 	}
 
 	for _, tc := range cases {
@@ -61,10 +64,37 @@ func albumResponse(imageURL string) []byte {
 // an empty image response.
 func artServer(t *testing.T, artByAlbum map[string]string) *httptest.Server {
 	t.Helper()
+	return artServerFull(t, artByAlbum, nil)
+}
+
+// artServerFull handles both album.getInfo and artist.getTopAlbums requests.
+// topAlbumsByArtist maps artist names to their canonical album name list.
+func artServerFull(t *testing.T, artByAlbum map[string]string, topAlbumsByArtist map[string][]string) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		album := r.URL.Query().Get("album")
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(albumResponse(artByAlbum[album]))
+		switch r.URL.Query().Get("method") {
+		case "artist.getTopAlbums":
+			artist := r.URL.Query().Get("artist")
+			type albumEntry struct {
+				Name string `json:"name"`
+			}
+			type topAlbums struct {
+				Album []albumEntry `json:"album"`
+			}
+			type response struct {
+				TopAlbums topAlbums `json:"topalbums"`
+			}
+			var entries []albumEntry
+			for _, name := range topAlbumsByArtist[artist] {
+				entries = append(entries, albumEntry{Name: name})
+			}
+			b, _ := json.Marshal(response{TopAlbums: topAlbums{Album: entries}})
+			w.Write(b)
+		default: // album.getInfo
+			album := r.URL.Query().Get("album")
+			w.Write(albumResponse(artByAlbum[album]))
+		}
 	}))
 }
 
@@ -107,6 +137,82 @@ func TestAlbumImageURL_FallsBackThroughMultipleLevels(t *testing.T) {
 
 	c := newWithBase("key", srv.URL)
 	got, err := c.AlbumImageURL("Artist", "Album (Deluxe) [2023]")
+	if err != nil {
+		t.Fatalf("AlbumImageURL: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestAlbumImageURL_FallsBackFromEPSuffix(t *testing.T) {
+	const want = "https://example.com/cover.jpg"
+	srv := artServer(t, map[string]string{"Some Album": want})
+	defer srv.Close()
+
+	c := newWithBase("key", srv.URL)
+	got, err := c.AlbumImageURL("Artist", "Some Album EP")
+	if err != nil {
+		t.Fatalf("AlbumImageURL: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeForMatching(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Rock Soldier EP", "rock soldier"},
+		{"The Rock Soldier CD", "rock soldier"},
+		{"Señorita", "senorita"},
+		{"Senorita EP", "senorita"},
+		{"A Night to Remember", "night to remember"},
+		{"An Album", "album"},
+		{"Normal Album", "normal album"},
+		{"  Spaced  ", "spaced"},
+		{"Piano Man (Remastered)", "piano man"},
+		{"Piano Man (2014 Remaster)", "piano man"},
+		{"Some Album [EXPLICIT]", "some album"},
+		{"The Rock Soldier CD (Deluxe)", "rock soldier"},
+		{"(Just Brackets)", "(just brackets)"}, // leading bracket: don't strip whole string
+	}
+	for _, tc := range cases {
+		if got := normalizeForMatching(tc.in); got != tc.want {
+			t.Errorf("normalizeForMatching(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestAlbumImageURL_FallsBackViaTopAlbums(t *testing.T) {
+	const want = "https://example.com/cover.jpg"
+	// Scrobble has "Rock Soldier EP"; last.fm canonical name is "The Rock Soldier CD".
+	srv := artServerFull(t,
+		map[string]string{"The Rock Soldier CD": want},
+		map[string][]string{"Superdrag": {"The Rock Soldier CD"}},
+	)
+	defer srv.Close()
+
+	c := newWithBase("key", srv.URL)
+	got, err := c.AlbumImageURL("Superdrag", "Rock Soldier EP")
+	if err != nil {
+		t.Fatalf("AlbumImageURL: %v", err)
+	}
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestAlbumImageURL_FallsBackViaTopAlbumsWithAccent(t *testing.T) {
+	const want = "https://example.com/cover.jpg"
+	// Scrobble has "Senorita EP"; last.fm canonical name is "Señorita".
+	srv := artServerFull(t,
+		map[string]string{"Señorita": want},
+		map[string][]string{"Superdrag": {"Señorita"}},
+	)
+	defer srv.Close()
+
+	c := newWithBase("key", srv.URL)
+	got, err := c.AlbumImageURL("Superdrag", "Senorita EP")
 	if err != nil {
 		t.Fatalf("AlbumImageURL: %v", err)
 	}

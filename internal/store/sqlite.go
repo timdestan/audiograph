@@ -411,6 +411,28 @@ type AlbumArtEntry struct {
 	URL    string
 }
 
+// ClearAllUnresolvedAlbumArt deletes all "not found" album_art rows regardless
+// of age, forcing every failed lookup to be retried on the next prefetch.
+// Returns the number of rows removed.
+func (s *DB) ClearAllUnresolvedAlbumArt() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM album_art WHERE url = ''`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ClearUnresolvedArtistAlbumArt deletes all "not found" album_art rows for the given
+// artist, forcing failed lookups to be retried on the next prefetch.
+// Returns the number of rows removed.
+func (s *DB) ClearUnresolvedArtistAlbumArt(artist string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM album_art WHERE artist = ? AND url = ''`, artist)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ClearUnresolvedAlbumArt deletes "not found" album_art rows that were
 // resolved before the given cutoff, allowing them to be retried on the next
 // prefetch. Returns the number of rows removed.
