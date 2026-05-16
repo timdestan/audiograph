@@ -107,9 +107,7 @@ func SimplifiedAlbumNames(album string) []string {
 	var out []string
 	s := strings.TrimSpace(album)
 	for {
-		lp := strings.LastIndex(s, "(")
-		lb := strings.LastIndex(s, "[")
-		cut := max(lp, lb)
+		cut := strings.LastIndexAny(s, "([")
 		if cut < 0 {
 			break
 		}
